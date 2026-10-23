@@ -20,15 +20,15 @@
   <main>
     <section id="setup" class="state-card" hidden>
       <h1>Connect Homesteader to Firebase</h1>
-      <p>Add your new Firebase web app settings to <code>public/firebase-config.js</code>, then reload this page. The setup steps are in the README.</p>
+      <p>Finish Firebase App Check setup and add the public reCAPTCHA site key to <code>public/firebase-config.js</code>, then reload this page.</p>
     </section>
 
     <section id="auth-view" class="auth-layout" hidden>
       <div class="welcome">
         <span class="eyebrow">A place to begin</span>
         <h1>Find your place in the homestead.</h1>
-        <p>Tell the Homesteader team about yourself. Your introduction and photo are private and can be viewed only by you and the admins.</p>
-        <div class="welcome-note"><span aria-hidden="true">✳</span><span>Once an admin reaches out, you can reply in your private inbox.</span></div>
+        <p>Tell the Homesteader team about yourself. Your introduction and photos are private and can be viewed only by you and the admins.</p>
+        <div class="welcome-note"><span aria-hidden="true">✳</span><span>If an admin reaches out.</span></div>
       </div>
       <div class="card auth-card">
         <span class="eyebrow">Your account</span>
@@ -43,7 +43,7 @@
       <div class="page-intro">
         <span class="eyebrow">Your introduction</span>
         <h1>Tell us about yourself.</h1>
-        <p>Only you and Homesteader admins can see your information. You can return and update it at any time.</p>
+        <p>Only you and Homesteader admins can see your information. You can return and update your introduction; photos can be changed once every 30 days.</p>
       </div>
       <div class="content-grid">
         <div class="card profile-card">
@@ -57,12 +57,10 @@
             <p class="field-help">Share your background, interests, skills, and what you hope to find in a homestead. Up to 500 words.</p>
             <textarea id="profile-bio" rows="9" maxlength="6000" required placeholder="A little about me..."></textarea>
             <div id="word-count" class="field-count">0 / 500 words</div>
-            <label for="profile-photo">Profile photo <span class="optional">optional</span></label>
-            <div class="photo-control">
-              <img id="photo-preview" alt="Your profile photo preview" hidden>
-              <div id="photo-placeholder" class="photo-placeholder" aria-hidden="true">+</div>
-              <div><input id="profile-photo" type="file" accept="image/jpeg,image/png,image/webp"><p class="field-help">JPG, PNG, or WebP. Your photo is private.</p><button id="remove-photo" class="text-button" type="button" hidden>Remove photo</button></div>
-            </div>
+            <label for="profile-photo">Photos <span class="optional">optional</span></label>
+            <div id="photo-list" class="photo-list"></div>
+            <input id="profile-photo" type="file" accept="image/jpeg,image/png,image/webp" multiple>
+            <p id="photo-help" class="field-help">Up to 3 private photos. You can change the set once every 30 days. JPG, PNG, or WebP.</p>
             <button id="save-profile" class="primary-button" type="submit">Save introduction</button>
             <p id="profile-message" class="message" role="status"></p>
           </form>
@@ -82,10 +80,10 @@
     <section id="admin-view" class="admin-layout" hidden>
       <div class="page-intro"><span class="eyebrow">Admin workspace</span><h1>People &amp; conversations.</h1><p>Review private introductions and reach out to people who may be a good fit.</p></div>
       <div class="admin-grid">
-        <aside class="card applicant-list-card"><div class="section-heading"><h2>Profiles</h2><span id="applicant-count" class="count">0</span></div><label class="sr-only" for="applicant-search">Search profiles</label><input id="applicant-search" type="search" placeholder="Search name, location, email"><div id="applicant-list" class="applicant-list"></div><p id="applicant-empty" class="muted">No profiles submitted yet.</p></aside>
+        <aside class="card applicant-list-card"><div class="section-heading"><h2>Profiles</h2><span id="applicant-count" class="count">0</span></div><label class="sr-only" for="applicant-search">Search profiles</label><input id="applicant-search" type="search" placeholder="Search name, location, email"><div id="applicant-list" class="applicant-list"></div><p id="applicant-empty" class="muted">No profiles submitted yet.</p><h2 class="blocked-heading">Blocked accounts</h2><div id="blocked-list" class="applicant-list"></div></aside>
         <div id="admin-detail-empty" class="card detail-empty">Select a profile to review it.</div>
         <div id="admin-detail" class="detail-column" hidden>
-          <article class="card"><div class="section-heading"><h2 id="detail-name"></h2><span id="detail-status" class="status-pill"></span></div><p id="detail-email" class="detail-line"></p><p id="detail-location" class="detail-line"></p><img id="detail-photo" class="detail-photo" alt="Applicant profile photo" hidden><div class="detail-label">Introduction</div><p id="detail-bio" class="detail-bio"></p><label for="review-status">Review status</label><div class="review-row"><select id="review-status"><option value="submitted">Submitted</option><option value="reviewing">Reviewing</option><option value="good-fit">Good fit</option><option value="declined">Declined</option></select><button id="save-review" type="button" class="secondary-button">Save status</button></div><p id="review-message" class="message" role="status"></p></article>
+          <article class="card"><div class="section-heading"><h2 id="detail-name"></h2><span id="detail-status" class="status-pill"></span></div><p id="detail-email" class="detail-line"></p><p id="detail-location" class="detail-line"></p><div id="detail-photos" class="detail-photos"></div><div class="detail-label">Introduction</div><p id="detail-bio" class="detail-bio"></p><label for="review-status">Review status</label><div class="review-row"><select id="review-status"><option value="submitted">Submitted</option><option value="reviewing">Reviewing</option><option value="good-fit">Good fit</option><option value="declined">Declined</option></select><button id="save-review" type="button" class="secondary-button">Save status</button></div><p id="review-message" class="message" role="status"></p><div class="account-actions"><button id="block-applicant" type="button" class="secondary-button">Block account</button><button id="delete-applicant" type="button" class="danger-button">Delete profile and block account</button></div><p id="account-action-message" class="message" role="status"></p></article>
           <section class="card"><div class="inbox-heading"><span class="inbox-icon" aria-hidden="true">✉</span><div><span class="eyebrow">Private conversation</span><h2>Messages</h2></div></div><div id="admin-messages" class="messages" aria-live="polite"></div><p id="admin-chat-empty" class="muted">Start the conversation with a message. The applicant can reply after you do.</p><form id="admin-message-form" class="message-form"><label for="admin-message">Message to applicant</label><textarea id="admin-message" maxlength="2000" rows="3" required></textarea><button id="admin-send" class="primary-button" type="submit">Send message</button></form><p id="admin-message-status" class="message" role="status"></p></section>
         </div>
       </div>

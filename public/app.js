@@ -1,10 +1,12 @@
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/13.1.0/firebase-app.js';
 import { getAuth, onAuthStateChanged, GoogleAuthProvider, signInWithPopup, signOut } from 'https://www.gstatic.com/firebasejs/13.1.0/firebase-auth.js';
-import { getFirestore, doc, collection, getDoc, setDoc, updateDoc, addDoc, writeBatch, onSnapshot, query, orderBy, serverTimestamp } from 'https://www.gstatic.com/firebasejs/13.1.0/firebase-firestore.js';
-import { firebaseConfig } from './firebase-config.js';
+import { getFirestore, doc, collection, getDoc, onSnapshot, query, orderBy } from 'https://www.gstatic.com/firebasejs/13.1.0/firebase-firestore.js';
+import { initializeAppCheck, ReCaptchaEnterpriseProvider } from 'https://www.gstatic.com/firebasejs/13.1.0/firebase-app-check.js';
+import { getFunctions, httpsCallable } from 'https://www.gstatic.com/firebasejs/13.1.0/firebase-functions.js';
+import { firebaseConfig, appCheckSiteKey } from './firebase-config.js';
 
 const $ = id => document.getElementById(id);
-const configured = firebaseConfig.apiKey && firebaseConfig.apiKey !== 'REPLACE_ME' && firebaseConfig.projectId !== 'REPLACE_ME' && firebaseConfig.appId !== 'REPLACE_ME';
+const configured = firebaseConfig.apiKey && firebaseConfig.apiKey !== 'REPLACE_ME' && firebaseConfig.projectId !== 'REPLACE_ME' && firebaseConfig.appId !== 'REPLACE_ME' && appCheckSiteKey && appCheckSiteKey !== 'REPLACE_ME';
 if (!configured) {
   $('setup').hidden = false;
 } else {
@@ -13,14 +15,21 @@ if (!configured) {
 
 function start() {
   const app = initializeApp(firebaseConfig);
+  initializeAppCheck(app, { provider: new ReCaptchaEnterpriseProvider(appCheckSiteKey), isTokenAutoRefreshEnabled: true });
   const auth = getAuth(app);
   const db = getFirestore(app);
+  const functions = getFunctions(app, 'us-west2');
+  const saveProfileCall = httpsCallable(functions, 'saveProfile');
+  const sendMessageCall = httpsCallable(functions, 'sendMessage');
+  const setReviewStatusCall = httpsCallable(functions, 'setReviewStatus');
+  const manageApplicantCall = httpsCallable(functions, 'manageApplicant');
   let currentUser = null;
   let currentProfile = null;
   let isAdmin = false;
-  let pendingPhoto = null;
+  let pendingPhotos = null;
   let profileInitialized = false;
   let applicants = [];
+  let blocked = new Map();
   let selectedUid = null;
   let memberMessagesUnsub = null;
   let memberConversationUnsub = null;
@@ -28,6 +37,7 @@ function start() {
   let adminConversationUnsub = null;
   let profileUnsub = null;
   let applicantsUnsub = null;
+  let blockedUnsub = null;
   let authGeneration = 0;
 
   function status(id, text, error = false) {
@@ -39,8 +49,8 @@ function start() {
     for (const view of ['auth-view', 'member-view', 'admin-view']) $(view).hidden = view !== id;
   }
   function cleanSubscriptions() {
-    for (const unsub of [memberMessagesUnsub, memberConversationUnsub, adminMessagesUnsub, adminConversationUnsub, profileUnsub, applicantsUnsub]) if (unsub) unsub();
-    memberMessagesUnsub = memberConversationUnsub = adminMessagesUnsub = adminConversationUnsub = profileUnsub = applicantsUnsub = null;
+    for (const unsub of [memberMessagesUnsub, memberConversationUnsub, adminMessagesUnsub, adminConversationUnsub, profileUnsub, applicantsUnsub, blockedUnsub]) if (unsub) unsub();
+    memberMessagesUnsub = memberConversationUnsub = adminMessagesUnsub = adminConversationUnsub = profileUnsub = applicantsUnsub = blockedUnsub = null;
   }
   $('google-sign-in').addEventListener('click', async () => {
     const button = $('google-sign-in');
@@ -62,8 +72,9 @@ function start() {
     currentUser = user;
     currentProfile = null;
     profileInitialized = false;
-    pendingPhoto = null;
+    pendingPhotos = null;
     applicants = [];
+    blocked = new Map();
     selectedUid = null;
     $('sign-out').hidden = !user;
     $('account-email').hidden = !user;
@@ -76,11 +87,17 @@ function start() {
         status('auth-message', 'Please sign in with Google.');
         return;
       }
+      if ((await getDoc(doc(db, 'blockedUsers', user.uid))).exists()) {
+        await signOut(auth);
+        status('auth-message', 'This account has been blocked.', true);
+        return;
+      }
       isAdmin = (await getDoc(doc(db, 'admins', user.uid))).exists();
       if (generation !== authGeneration) return;
       if (isAdmin) {
         showView('admin-view');
         watchApplicants();
+        watchBlocked();
       } else {
         showView('member-view');
         watchProfile(user.uid);
@@ -92,12 +109,43 @@ function start() {
     }
   });
 
-  function renderPhoto(src) {
-    $('photo-preview').hidden = !src;
-    $('photo-placeholder').hidden = Boolean(src);
-    $('remove-photo').hidden = !src;
-    if (src) $('photo-preview').src = src;
-    else $('photo-preview').removeAttribute('src');
+  function savedPhotos() {
+    return currentProfile?.photos || (currentProfile?.photoDataUrl ? [currentProfile.photoDataUrl] : []);
+  }
+  function photosCanChange() {
+    const changedAt = currentProfile?.photoChangedAt?.toDate?.();
+    return !savedPhotos().length || !changedAt || Date.now() - changedAt.getTime() >= 30 * 24 * 60 * 60 * 1000;
+  }
+  function renderPhotos() {
+    const photos = pendingPhotos === null ? savedPhotos() : pendingPhotos;
+    const canChange = photosCanChange();
+    const list = $('photo-list');
+    list.replaceChildren();
+    for (const [index, src] of photos.entries()) {
+      const item = document.createElement('div');
+      item.className = 'photo-item';
+      const img = document.createElement('img');
+      img.src = src;
+      img.alt = `Profile photo ${index + 1}`;
+      item.append(img);
+      if (canChange) {
+        const remove = document.createElement('button');
+        remove.type = 'button';
+        remove.className = 'text-button';
+        remove.textContent = 'Remove';
+        remove.addEventListener('click', () => {
+          pendingPhotos = [...photos];
+          pendingPhotos.splice(index, 1);
+          renderPhotos();
+        });
+        item.append(remove);
+      }
+      list.append(item);
+    }
+    $('profile-photo').disabled = !canChange || photos.length >= 3;
+    $('photo-help').textContent = canChange
+      ? `${photos.length} of 3 photos. You can change the set once every 30 days. JPG, PNG, or WebP.`
+      : `Photos can be changed again ${new Date(currentProfile.photoChangedAt.toDate().getTime() + 30 * 24 * 60 * 60 * 1000).toLocaleDateString()}.`;
   }
   function watchProfile(uid) {
     profileUnsub = onSnapshot(doc(db, 'users', uid), snapshot => {
@@ -108,10 +156,10 @@ function start() {
         $('profile-name').value = profile?.profile?.name || '';
         $('profile-location').value = profile?.profile?.location || '';
         $('profile-bio').value = profile?.bio || '';
-        renderPhoto(profile?.photoDataUrl || '');
         updateWordCount();
         profileInitialized = true;
       }
+      if (pendingPhotos === null) renderPhotos();
     }, error => status('profile-message', readableError(error), true));
   }
   function updateWordCount() {
@@ -122,21 +170,19 @@ function start() {
   }
   $('profile-bio').addEventListener('input', updateWordCount);
   $('profile-photo').addEventListener('change', async event => {
-    const file = event.target.files?.[0];
-    if (!file) return;
+    const files = [...(event.target.files || [])];
+    if (!files.length) return;
     try {
-      pendingPhoto = await preparePhoto(file);
-      renderPhoto(pendingPhoto);
-      status('profile-message', 'Photo ready. Save your introduction to keep it.');
+      const current = pendingPhotos === null ? savedPhotos() : pendingPhotos;
+      if (!photosCanChange() || current.length + files.length > 3) throw new Error('You can keep no more than three photos.');
+      const prepared = await Promise.all(files.map(preparePhoto));
+      pendingPhotos = [...current, ...prepared];
+      renderPhotos();
+      status('profile-message', 'Photos ready. Save your introduction to keep them.');
     } catch (error) {
       status('profile-message', error.message, true);
-      event.target.value = '';
     }
-  });
-  $('remove-photo').addEventListener('click', () => {
-    pendingPhoto = '';
-    $('profile-photo').value = '';
-    renderPhoto('');
+    event.target.value = '';
   });
   $('profile-form').addEventListener('submit', async event => {
     event.preventDefault();
@@ -147,15 +193,11 @@ function start() {
     if (updateWordCount() > 500) return status('profile-message', 'Keep your introduction within 500 words.', true);
     const button = $('save-profile');
     button.disabled = true;
-    const data = {
-      profile: { name, location }, bio,
-      photoDataUrl: pendingPhoto === null ? (currentProfile?.photoDataUrl || '') : pendingPhoto,
-      status: 'submitted', updatedAt: serverTimestamp()
-    };
+    const data = { profile: { name, location }, bio, photos: pendingPhotos === null ? savedPhotos() : pendingPhotos };
     try {
-      if (currentProfile) await updateDoc(doc(db, 'users', currentUser.uid), data);
-      else await setDoc(doc(db, 'users', currentUser.uid), { ...data, email: currentUser.email, createdAt: serverTimestamp() });
-      pendingPhoto = null;
+      await saveProfileCall(data);
+      pendingPhotos = null;
+      renderPhotos();
       status('profile-message', 'Your introduction has been saved for admin review.');
     } catch (error) {
       status('profile-message', readableError(error), true);
@@ -181,7 +223,7 @@ function start() {
     const button = event.target.querySelector('button');
     button.disabled = true;
     try {
-      await addDoc(collection(db, 'conversations', currentUser.uid, 'messages'), messageData(currentUser.uid, 'member', text));
+      await sendMessageCall({ targetUid: currentUser.uid, text });
       $('member-message').value = '';
       status('member-message-status', 'Reply sent.');
     } catch (error) {
@@ -199,11 +241,47 @@ function start() {
       if (selectedUid) {
         const selected = applicants.find(person => person.uid === selectedUid);
         if (selected) renderApplicantDetail(selected);
+        else {
+          selectedUid = null;
+          $('admin-detail').hidden = true;
+          $('admin-detail-empty').hidden = false;
+        }
       }
     }, error => {
       $('applicant-empty').hidden = false;
       $('applicant-empty').textContent = readableError(error);
     });
+  }
+  function watchBlocked() {
+    blockedUnsub = onSnapshot(collection(db, 'blockedUsers'), snapshot => {
+      blocked = new Map(snapshot.docs.map(item => [item.id, item.data()]));
+      renderApplicantList();
+      renderBlockedList();
+      const selected = applicants.find(person => person.uid === selectedUid);
+      if (selected) renderApplicantDetail(selected);
+    }, error => status('account-action-message', readableError(error), true));
+  }
+  function renderBlockedList() {
+    const list = $('blocked-list');
+    list.replaceChildren();
+    for (const [uid, info] of blocked) {
+      const row = document.createElement('div');
+      row.className = 'blocked-row';
+      const label = document.createElement('span');
+      label.textContent = info.email || uid;
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'text-button';
+      button.textContent = 'Unblock';
+      button.addEventListener('click', async () => {
+        button.disabled = true;
+        try { await manageApplicantCall({ uid, action: 'unblock' }); }
+        catch (error) { status('account-action-message', readableError(error), true); }
+        finally { button.disabled = false; }
+      });
+      row.append(label, button);
+      list.append(row);
+    }
   }
   function renderApplicantList() {
     const term = $('applicant-search').value.trim().toLowerCase();
@@ -219,7 +297,7 @@ function start() {
       const name = document.createElement('strong');
       name.textContent = person.profile?.name || 'Unnamed';
       const meta = document.createElement('span');
-      meta.textContent = `${person.email || ''} · ${statusLabel(person.status)}`;
+      meta.textContent = `${person.email || ''} · ${blocked.has(person.uid) ? 'Blocked' : statusLabel(person.status)}`;
       button.append(name, meta);
       button.addEventListener('click', () => selectApplicant(person.uid));
       list.append(button);
@@ -242,14 +320,23 @@ function start() {
     $('admin-detail-empty').hidden = true;
     $('admin-detail').hidden = false;
     $('detail-name').textContent = person.profile?.name || 'Unnamed';
-    $('detail-status').textContent = statusLabel(person.status);
+    $('detail-status').textContent = blocked.has(person.uid) ? 'Blocked' : statusLabel(person.status);
     $('detail-email').textContent = person.email || '';
     $('detail-location').textContent = person.profile?.location ? `Location: ${person.profile.location}` : 'Location not provided';
     $('detail-bio').textContent = person.bio || 'No introduction yet.';
-    $('detail-photo').hidden = !person.photoDataUrl;
-    if (person.photoDataUrl) $('detail-photo').src = person.photoDataUrl;
-    else $('detail-photo').removeAttribute('src');
+    const photos = person.photos || (person.photoDataUrl ? [person.photoDataUrl] : []);
+    $('detail-photos').replaceChildren();
+    for (const [index, src] of photos.entries()) {
+      const img = document.createElement('img');
+      img.src = src;
+      img.alt = `Applicant photo ${index + 1}`;
+      img.className = 'detail-photo';
+      $('detail-photos').append(img);
+    }
     $('review-status').value = person.status || 'submitted';
+    $('block-applicant').textContent = blocked.has(person.uid) ? 'Unblock account' : 'Block account';
+    $('save-review').disabled = blocked.has(person.uid);
+    $('admin-send').disabled = blocked.has(person.uid);
     status('review-message', '');
   }
   $('applicant-search').addEventListener('input', renderApplicantList);
@@ -258,13 +345,35 @@ function start() {
     const button = $('save-review');
     button.disabled = true;
     try {
-      await updateDoc(doc(db, 'users', selectedUid), { status: $('review-status').value, reviewedAt: serverTimestamp() });
+      await setReviewStatusCall({ uid: selectedUid, status: $('review-status').value });
       status('review-message', 'Review status saved.');
     } catch (error) {
       status('review-message', readableError(error), true);
     } finally {
       button.disabled = false;
     }
+  });
+  $('block-applicant').addEventListener('click', async () => {
+    if (!selectedUid) return;
+    const uid = selectedUid;
+    const action = blocked.has(uid) ? 'unblock' : 'block';
+    const button = $('block-applicant');
+    button.disabled = true;
+    try {
+      await manageApplicantCall({ uid, action });
+      status('account-action-message', action === 'block' ? 'Account blocked.' : 'Account unblocked.');
+    } catch (error) { status('account-action-message', readableError(error), true); }
+    finally { button.disabled = false; }
+  });
+  $('delete-applicant').addEventListener('click', async () => {
+    if (!selectedUid || !confirm('Delete this profile and block the account from returning?')) return;
+    const button = $('delete-applicant');
+    button.disabled = true;
+    try {
+      await manageApplicantCall({ uid: selectedUid, action: 'delete' });
+      status('account-action-message', 'Profile deleted and account blocked.');
+    } catch (error) { status('account-action-message', readableError(error), true); }
+    finally { button.disabled = false; }
   });
   function watchAdminConversation(uid) {
     adminConversationUnsub = onSnapshot(doc(db, 'conversations', uid), snapshot => {
@@ -283,17 +392,7 @@ function start() {
     const button = $('admin-send');
     button.disabled = true;
     try {
-      const conversation = doc(db, 'conversations', uid);
-      const exists = (await getDoc(conversation)).exists();
-      if (exists) {
-        await addDoc(collection(conversation, 'messages'), messageData(currentUser.uid, 'admin', text));
-      } else {
-        const batch = writeBatch(db);
-        const firstMessage = doc(collection(conversation, 'messages'));
-        batch.set(conversation, { participantUid: uid, openedBy: currentUser.uid, openedAt: serverTimestamp(), firstMessageId: firstMessage.id });
-        batch.set(firstMessage, messageData(currentUser.uid, 'admin', text));
-        await batch.commit();
-      }
+      await sendMessageCall({ targetUid: uid, text });
       $('admin-message').value = '';
       status('admin-message-status', 'Message sent.');
     } catch (error) {
@@ -303,9 +402,6 @@ function start() {
     }
   });
 
-  function messageData(senderUid, senderRole, text) {
-    return { senderUid, senderRole, text, createdAt: serverTimestamp() };
-  }
   function renderMessages(id, snapshot, myUid) {
     const container = $(id);
     container.replaceChildren();

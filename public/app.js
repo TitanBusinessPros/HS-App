@@ -1,5 +1,5 @@
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/13.1.0/firebase-app.js';
-import { getAuth, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword, sendPasswordResetEmail, signOut } from 'https://www.gstatic.com/firebasejs/13.1.0/firebase-auth.js';
+import { getAuth, onAuthStateChanged, GoogleAuthProvider, signInWithPopup, signOut } from 'https://www.gstatic.com/firebasejs/13.1.0/firebase-auth.js';
 import { getFirestore, doc, collection, getDoc, setDoc, updateDoc, addDoc, writeBatch, onSnapshot, query, orderBy, serverTimestamp } from 'https://www.gstatic.com/firebasejs/13.1.0/firebase-firestore.js';
 import { firebaseConfig } from './firebase-config.js';
 
@@ -18,7 +18,6 @@ function start() {
   let currentUser = null;
   let currentProfile = null;
   let isAdmin = false;
-  let authMode = 'login';
   let pendingPhoto = null;
   let profileInitialized = false;
   let applicants = [];
@@ -43,46 +42,16 @@ function start() {
     for (const unsub of [memberMessagesUnsub, memberConversationUnsub, adminMessagesUnsub, adminConversationUnsub, profileUnsub, applicantsUnsub]) if (unsub) unsub();
     memberMessagesUnsub = memberConversationUnsub = adminMessagesUnsub = adminConversationUnsub = profileUnsub = applicantsUnsub = null;
   }
-  function setAuthMode(mode) {
-    authMode = mode;
-    $('login-tab').classList.toggle('active', mode === 'login');
-    $('signup-tab').classList.toggle('active', mode === 'signup');
-    $('login-tab').setAttribute('aria-selected', String(mode === 'login'));
-    $('signup-tab').setAttribute('aria-selected', String(mode === 'signup'));
-    $('auth-heading').textContent = mode === 'login' ? 'Welcome back' : 'Create your account';
-    $('auth-description').textContent = mode === 'login' ? 'Sign in to update your introduction or read messages.' : 'Your introduction will be private to you and the admins.';
-    $('auth-submit').textContent = mode === 'login' ? 'Sign in' : 'Create account';
-    $('auth-password').autocomplete = mode === 'login' ? 'current-password' : 'new-password';
-    $('reset-password').hidden = mode !== 'login';
-    status('auth-message', '');
-  }
-  $('login-tab').addEventListener('click', () => setAuthMode('login'));
-  $('signup-tab').addEventListener('click', () => setAuthMode('signup'));
-  $('auth-form').addEventListener('submit', async event => {
-    event.preventDefault();
-    const email = $('auth-email').value.trim();
-    const password = $('auth-password').value;
-    const button = $('auth-submit');
+  $('google-sign-in').addEventListener('click', async () => {
+    const button = $('google-sign-in');
     button.disabled = true;
     status('auth-message', '');
     try {
-      if (authMode === 'signup') await createUserWithEmailAndPassword(auth, email, password);
-      else await signInWithEmailAndPassword(auth, email, password);
-      $('auth-form').reset();
+      await signInWithPopup(auth, new GoogleAuthProvider());
     } catch (error) {
       status('auth-message', readableError(error), true);
     } finally {
       button.disabled = false;
-    }
-  });
-  $('reset-password').addEventListener('click', async () => {
-    const email = $('auth-email').value.trim();
-    if (!email) return status('auth-message', 'Enter your email address first.', true);
-    try {
-      await sendPasswordResetEmail(auth, email);
-      status('auth-message', 'If this email has an account, a reset link is on its way.');
-    } catch (error) {
-      status('auth-message', readableError(error), true);
     }
   });
   $('sign-out').addEventListener('click', () => signOut(auth));
@@ -101,6 +70,12 @@ function start() {
     $('account-email').textContent = user?.email || '';
     if (!user) return showView('auth-view');
     try {
+      const token = await user.getIdTokenResult();
+      if (token.claims.firebase?.sign_in_provider !== 'google.com') {
+        await signOut(auth);
+        status('auth-message', 'Please sign in with Google.');
+        return;
+      }
       isAdmin = (await getDoc(doc(db, 'admins', user.uid))).exists();
       if (generation !== authGeneration) return;
       if (isAdmin) {
@@ -354,10 +329,11 @@ function start() {
   }
   function readableError(error) {
     const map = {
-      'auth/invalid-credential': 'Email or password is incorrect.',
-      'auth/email-already-in-use': 'That email already has an account.',
-      'auth/weak-password': 'Choose a stronger password.',
-      'auth/invalid-email': 'Enter a valid email address.',
+      'auth/popup-closed-by-user': 'Google sign-in was canceled.',
+      'auth/popup-blocked': 'Your browser blocked the Google sign-in window. Allow popups and try again.',
+      'auth/unauthorized-domain': 'This website must be added to Firebase Authentication authorized domains.',
+      'auth/operation-not-allowed': 'Google sign-in must be enabled in Firebase Authentication.',
+      'auth/account-exists-with-different-credential': 'This email has an account using another sign-in method. Contact an admin for help.',
       'permission-denied': 'Access was denied. Check the Firebase rules and admin setup.'
     };
     return map[error.code] || error.message || 'Something went wrong. Please try again.';

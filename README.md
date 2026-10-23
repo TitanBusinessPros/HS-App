@@ -2,13 +2,13 @@
 
 Homesteader is a private introduction and messaging app. It uses a **separate Firebase project**. There is no public profile directory, town membership, games, chat rooms, payments, daily rewards, or member initiated messaging.
 
-Applicants can create an email and password account, save a display name, optional location, introduction, and private photo. Only the applicant and admins can read that profile. An admin can set a review status and send the first message. The applicant can reply only after that conversation exists. Admin access is enforced by Firestore rules through `admins/{uid}` documents, not by a client side flag.
+Applicants sign in with Google and save a display name, optional location, introduction, and private photo. Only the applicant and admins can read that profile. An admin can set a review status and send the first message. The applicant can reply only after that conversation exists. Firestore rules require Google authentication, and admin access is granted through `admins/{uid}` documents.
 
 ## Firebase setup
 
 The Web app configuration for project `homesteader-f8693` is already in `public/firebase-config.js`. The Cloud Firestore `(default)` database is in `us-west2` (Los Angeles), and this repository's rules have been deployed. Firebase Storage is set up, but this version does not use it: resized photos are saved inside private Firestore profile documents, with a 200 KB encoded limit.
 
-1. In the [Firebase console](https://console.firebase.google.com/), confirm **Authentication → Sign-in method → Email/Password** is enabled.
+1. In the [Firebase console](https://console.firebase.google.com/), open **Authentication → Sign-in method**. Enable **Google** and choose the required project support email. Disable **Email/Password** so Google is the only sign-in provider.
 2. When you change `firestore.rules`, deploy the updated rules from this `HS-App` directory:
 
    ```powershell
@@ -16,7 +16,7 @@ The Web app configuration for project `homesteader-f8693` is already in `public/
    firebase deploy --project homesteader-f8693 --only firestore:rules
    ```
 
-3. In **Authentication → Settings → Authorized domains**, add `titanbusinesspros.github.io`. If you later use a custom domain for GitHub Pages, add that domain too. The `authDomain` in `firebase-config.js` stays `homesteader-f8693.firebaseapp.com` for this email/password flow.
+3. In **Authentication → Settings → Authorized domains**, add `titanbusinesspros.github.io`. If you later use a custom domain for GitHub Pages, add that domain too. The `authDomain` in `firebase-config.js` stays `homesteader-f8693.firebaseapp.com` for the Google popup flow.
 
 The `measurementId` from Firebase is present in the config. Analytics is not initialized by this app.
 
@@ -38,7 +38,7 @@ Fetch and integrate remote commits before pushing if other people have changed t
 
 ## First admin
 
-1. Open the published site and use **Create account** for the first admin.
+1. Open the published site and use **Continue with Google** for the first admin.
 2. In Firebase Authentication, copy that account's **UID**. In Firestore, create a collection named `admins`, then a document whose ID is **exactly that UID**. Give it a field such as `name: "Admin"`.
 3. Sign out and back in. The admin workspace will appear. Create a separate applicant account to submit a profile, then the admin can open a conversation with it.
 

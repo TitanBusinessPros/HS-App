@@ -31,20 +31,10 @@
         <div class="welcome-note"><span aria-hidden="true">✳</span><span>Once an admin reaches out, you can reply in your private inbox.</span></div>
       </div>
       <div class="card auth-card">
-        <div class="tab-row" role="tablist" aria-label="Account">
-          <button id="login-tab" class="tab active" type="button" role="tab" aria-selected="true">Sign in</button>
-          <button id="signup-tab" class="tab" type="button" role="tab" aria-selected="false">Create account</button>
-        </div>
-        <h2 id="auth-heading">Welcome back</h2>
-        <p id="auth-description" class="muted">Sign in to update your introduction or read messages.</p>
-        <form id="auth-form">
-          <label for="auth-email">Email address</label>
-          <input id="auth-email" name="email" type="email" autocomplete="email" required>
-          <label for="auth-password">Password</label>
-          <input id="auth-password" name="password" type="password" autocomplete="current-password" minlength="6" required>
-          <button id="auth-submit" class="primary-button full" type="submit">Sign in</button>
-        </form>
-        <button id="reset-password" class="text-button reset" type="button">Forgot password?</button>
+        <span class="eyebrow">Your account</span>
+        <h2>Welcome to Homesteader</h2>
+        <p class="muted">Use a Google account to join or sign back in. Your introduction is shared only with you and the admin team.</p>
+        <button id="google-sign-in" class="google-button full" type="button"><span class="google-mark" aria-hidden="true">G</span>Continue with Google</button>
         <p id="auth-message" class="message" role="status"></p>
       </div>
     </section>

@@ -14,7 +14,7 @@ The public Firebase configuration and reCAPTCHA Enterprise site key are in `publ
 
 ## First admin
 
-`titanbusinesspros@gmail.com` is the first admin. Its Google account already exists in Firebase Authentication, and its UID has an `admins/{uid}` document in Firestore. Sign in with that Google account and the admin workspace should open directly. The admin does not need to create an applicant profile.
+`titanbusinesspros@gmail.com` and `pollysfarmok@gmail.com` are admins. Both Google accounts have signed in, and each Firebase Authentication UID has an `admins/{uid}` document in Firestore. The admin workspace opens directly when either account signs in. Admins do not need applicant profiles.
 
 Additional admins must first sign in with Google, then receive an `admins/{uid}` document through trusted Firebase access. Do not grant admin rights by putting an email address in an applicant profile.
 
@@ -27,6 +27,7 @@ App Check enforcement is enabled for Firebase Authentication and Cloud Firestore
 ## Profiles and security
 
 - Applicants can save a name, optional location, introduction, and up to three private photos. Source files may be JPG, PNG, or WebP; the browser resizes and converts them to JPEG before upload. Each encoded photo is limited to 200 KB.
+- Photo thumbnails show the complete image. Hovering or focusing a thumbnail shows a preview three times its size, positioned to stay inside the browser window.
 - A photo set can be changed once every 30 days. The first photo addition is allowed when the profile has none. The limit is enforced in `saveProfile`, including photo removal and replacement.
 - Photos are stored inside private Firestore `users/{uid}` documents. Firestore rules allow an applicant to read only their own profile; admins can read applicant profiles. Direct client writes are denied.
 - The `saveProfile` function screens photos using Google Cloud Vision SafeSearch and screens profile text using Google Cloud Natural Language moderation. `sendMessage` screens message text. The services reject content classified as adult/racy or profanity/derogatory at the configured thresholds and fail closed when screening is unavailable. Automated screening can make mistakes; admins should still review submissions.

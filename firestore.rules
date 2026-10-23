@@ -1,0 +1,115 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+    function isAdmin() {
+      return signedIn() && exists(/databases/$(database)/documents/admins/$(request.auth.uid));
+    }
+    function owns(uid) {
+      return signedIn() && request.auth.uid == uid;
+    }
+    function validProfile() {
+      return request.resource.data.keys().hasOnly([
+          'email', 'profile', 'bio', 'photoDataUrl', 'status', 'createdAt', 'updatedAt', 'reviewedAt'
+        ])
+        && request.resource.data.keys().hasAll([
+          'email', 'profile', 'bio', 'photoDataUrl', 'status', 'createdAt', 'updatedAt'
+        ])
+        && request.resource.data.email is string
+        && request.resource.data.email.size() <= 254
+        && request.resource.data.profile is map
+        && request.resource.data.profile.keys().hasOnly(['name', 'location'])
+        && request.resource.data.profile.keys().hasAll(['name', 'location'])
+        && request.resource.data.profile.name is string
+        && request.resource.data.profile.name.size() > 0
+        && request.resource.data.profile.name.size() <= 40
+        && request.resource.data.profile.location is string
+        && request.resource.data.profile.location.size() <= 100
+        && request.resource.data.bio is string
+        && request.resource.data.bio.size() > 0
+        && request.resource.data.bio.size() <= 6000
+        && request.resource.data.photoDataUrl is string
+        && request.resource.data.photoDataUrl.size() <= 200000
+        && (request.resource.data.photoDataUrl == '' || request.resource.data.photoDataUrl.matches('^data:image/jpeg;base64,[A-Za-z0-9+/=]+$'))
+        && request.resource.data.status in ['submitted', 'reviewing', 'good-fit', 'declined'];
+    }
+
+    // Admin documents are created only in the Firebase console or by a trusted server.
+    match /admins/{uid} {
+      allow get: if owns(uid);
+      allow list, write: if false;
+    }
+
+    match /users/{uid} {
+      allow get: if owns(uid) || isAdmin();
+      allow list: if isAdmin();
+      allow create: if owns(uid)
+        && validProfile()
+        && request.resource.data.email == request.auth.token.email
+        && request.resource.data.status == 'submitted'
+        && !request.resource.data.keys().hasAny(['reviewedAt'])
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time;
+      allow update: if validProfile() && (
+        (owns(uid)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['profile', 'bio', 'photoDataUrl', 'status', 'updatedAt'])
+          && request.resource.data.status == 'submitted'
+          && request.resource.data.updatedAt == request.time)
+        || (isAdmin()
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'reviewedAt'])
+          && request.resource.data.reviewedAt == request.time)
+      );
+      allow delete: if false;
+    }
+
+    function conversationPath(uid) {
+      return /databases/$(database)/documents/conversations/$(uid);
+    }
+    function firstMessagePath(uid, messageId) {
+      return /databases/$(database)/documents/conversations/$(uid)/messages/$(messageId);
+    }
+    function validMessage() {
+      return request.resource.data.keys().hasOnly(['senderUid', 'senderRole', 'text', 'createdAt'])
+        && request.resource.data.keys().hasAll(['senderUid', 'senderRole', 'text', 'createdAt'])
+        && request.resource.data.senderUid == request.auth.uid
+        && request.resource.data.senderRole == (isAdmin() ? 'admin' : 'member')
+        && request.resource.data.text is string
+        && request.resource.data.text.size() > 0
+        && request.resource.data.text.size() <= 2000
+        && request.resource.data.createdAt == request.time;
+    }
+    match /conversations/{uid} {
+      allow get: if owns(uid) || isAdmin();
+      allow list: if isAdmin();
+      allow create: if isAdmin()
+        && exists(/databases/$(database)/documents/users/$(uid))
+        && request.resource.data.keys().hasOnly(['participantUid', 'openedBy', 'openedAt', 'firstMessageId'])
+        && request.resource.data.keys().hasAll(['participantUid', 'openedBy', 'openedAt', 'firstMessageId'])
+        && request.resource.data.participantUid == uid
+        && request.resource.data.openedBy == request.auth.uid
+        && request.resource.data.openedAt == request.time
+        && request.resource.data.firstMessageId is string
+        && existsAfter(firstMessagePath(uid, request.resource.data.firstMessageId))
+        && getAfter(firstMessagePath(uid, request.resource.data.firstMessageId)).data.senderUid == request.auth.uid
+        && getAfter(firstMessagePath(uid, request.resource.data.firstMessageId)).data.senderRole == 'admin';
+      allow update, delete: if false;
+
+      match /messages/{messageId} {
+        allow get, list: if owns(uid) || isAdmin();
+        allow create: if signedIn()
+          && (owns(uid) || isAdmin())
+          && validMessage()
+          && existsAfter(conversationPath(uid))
+          && getAfter(conversationPath(uid)).data.participantUid == uid
+          && (isAdmin() || exists(conversationPath(uid)));
+        allow update, delete: if false;
+      }
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

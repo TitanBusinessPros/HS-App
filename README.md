@@ -6,17 +6,16 @@ Applicants sign in with Google and save a display name, optional location, intro
 
 ## Firebase setup
 
-The Web app configuration for project `homesteader-f8693` is already in `public/firebase-config.js`. The Cloud Firestore `(default)` database is in `us-west2` (Los Angeles), and this repository's rules have been deployed. Firebase Storage is set up, but this version does not use it: resized photos are saved inside private Firestore profile documents, with a 200 KB encoded limit.
+The Web app configuration for project `homesteader-f8693` is already in `public/firebase-config.js`. The Cloud Firestore `(default)` database is in `us-west2` (Los Angeles), and this repository's rules have been deployed. Firebase Authentication has Google enabled, Email/Password disabled, and `titanbusinesspros.github.io` authorized. Firebase Storage is set up, but this version does not use it: resized photos are saved inside private Firestore profile documents, with a 200 KB encoded limit.
 
-1. In the [Firebase console](https://console.firebase.google.com/), open **Authentication → Sign-in method**. Enable **Google** and choose the required project support email. Disable **Email/Password** so Google is the only sign-in provider.
-2. When you change `firestore.rules`, deploy the updated rules from this `HS-App` directory:
+When you change `firestore.rules`, deploy the updated rules from this `HS-App` directory:
 
-   ```powershell
-   firebase login
-   firebase deploy --project homesteader-f8693 --only firestore:rules
-   ```
+```powershell
+firebase login
+firebase deploy --project homesteader-f8693 --only firestore:rules
+```
 
-3. In **Authentication → Settings → Authorized domains**, add `titanbusinesspros.github.io`. If you later use a custom domain for GitHub Pages, add that domain too. The `authDomain` in `firebase-config.js` stays `homesteader-f8693.firebaseapp.com` for the Google popup flow.
+If you later use a custom domain for GitHub Pages, add it under **Authentication → Settings → Authorized domains**. The `authDomain` in `firebase-config.js` stays `homesteader-f8693.firebaseapp.com` for the Google popup flow.
 
 The `measurementId` from Firebase is present in the config. Analytics is not initialized by this app.
 

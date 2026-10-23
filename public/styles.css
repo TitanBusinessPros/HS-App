@@ -8,7 +8,9 @@
 .google-mark{display:grid;place-items:center;width:22px;height:22px;border-radius:50%;font-family:Arial,sans-serif;font-size:1.1rem;font-weight:700;color:#4285f4}
 .photo-list,.detail-photos{display:flex;flex-wrap:wrap;gap:12px;margin:10px 0}
 .photo-item{display:flex;flex-direction:column;align-items:center;gap:3px}
-.photo-item img,.detail-photos img{width:110px;height:110px;object-fit:cover;border-radius:11px;border:1px solid #d9e1d6}
+.photo-item img,.detail-photos img{width:110px;height:110px;object-fit:contain;background:#f2f5ef;border-radius:11px;border:1px solid #d9e1d6;cursor:zoom-in}
+.photo-item img:focus-visible,.detail-photos img:focus-visible{outline:3px solid #3e7051;outline-offset:3px}
+.photo-hover-preview{position:fixed;z-index:1000;width:330px;height:330px;max-width:calc(100vw - 24px);max-height:calc(100vh - 24px);object-fit:contain;background:#fffefa;border:1px solid #d9e1d6;border-radius:12px;box-shadow:0 16px 45px rgba(20,40,25,.24);pointer-events:none}
 .account-actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:22px}
 .danger-button{border:1px solid #a33d2f;background:#a33d2f;color:#fff;border-radius:9px;padding:12px 20px;font-weight:700}
 .danger-button:hover{background:#8e3026}

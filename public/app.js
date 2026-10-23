@@ -39,6 +39,41 @@ function start() {
   let applicantsUnsub = null;
   let blockedUnsub = null;
   let authGeneration = 0;
+  const photoPreview = document.createElement('img');
+  photoPreview.className = 'photo-hover-preview';
+  photoPreview.alt = '';
+  photoPreview.hidden = true;
+  document.body.append(photoPreview);
+
+  function hidePhotoPreview() {
+    photoPreview.hidden = true;
+    photoPreview.removeAttribute('src');
+  }
+  function positionPhotoPreview(x, y) {
+    const width = Math.min(330, window.innerWidth - 24);
+    const height = Math.min(330, window.innerHeight - 24);
+    photoPreview.style.left = `${Math.max(12, Math.min(x + 18, window.innerWidth - width - 12))}px`;
+    photoPreview.style.top = `${Math.max(12, Math.min(y + 18, window.innerHeight - height - 12))}px`;
+  }
+  function attachPhotoPreview(img) {
+    img.tabIndex = 0;
+    img.addEventListener('mouseenter', event => {
+      photoPreview.src = img.src;
+      photoPreview.hidden = false;
+      positionPhotoPreview(event.clientX, event.clientY);
+    });
+    img.addEventListener('mousemove', event => positionPhotoPreview(event.clientX, event.clientY));
+    img.addEventListener('mouseleave', hidePhotoPreview);
+    img.addEventListener('focus', () => {
+      const rect = img.getBoundingClientRect();
+      photoPreview.src = img.src;
+      photoPreview.hidden = false;
+      positionPhotoPreview(rect.right, rect.top);
+    });
+    img.addEventListener('blur', hidePhotoPreview);
+  }
+  window.addEventListener('scroll', hidePhotoPreview, { passive: true });
+  window.addEventListener('resize', hidePhotoPreview);
 
   function status(id, text, error = false) {
     const el = $(id);
@@ -120,6 +155,7 @@ function start() {
     const photos = pendingPhotos === null ? savedPhotos() : pendingPhotos;
     const canChange = photosCanChange();
     const list = $('photo-list');
+    hidePhotoPreview();
     list.replaceChildren();
     for (const [index, src] of photos.entries()) {
       const item = document.createElement('div');
@@ -127,6 +163,7 @@ function start() {
       const img = document.createElement('img');
       img.src = src;
       img.alt = `Profile photo ${index + 1}`;
+      attachPhotoPreview(img);
       item.append(img);
       if (canChange) {
         const remove = document.createElement('button');
@@ -325,12 +362,14 @@ function start() {
     $('detail-location').textContent = person.profile?.location ? `Location: ${person.profile.location}` : 'Location not provided';
     $('detail-bio').textContent = person.bio || 'No introduction yet.';
     const photos = person.photos || (person.photoDataUrl ? [person.photoDataUrl] : []);
+    hidePhotoPreview();
     $('detail-photos').replaceChildren();
     for (const [index, src] of photos.entries()) {
       const img = document.createElement('img');
       img.src = src;
       img.alt = `Applicant photo ${index + 1}`;
       img.className = 'detail-photo';
+      attachPhotoPreview(img);
       $('detail-photos').append(img);
     }
     $('review-status').value = person.status || 'submitted';

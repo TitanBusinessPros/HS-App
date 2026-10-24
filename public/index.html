@@ -13,7 +13,7 @@
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="stylesheet" href="styles.css">
 </head>
-<body>
+<body class="app-loading">
   <header class="site-header">
     <a class="brand" href="./" aria-label="Homesteader home"><img class="brand-logo" src="icons/favicon-96x96.png" alt="" width="62" height="62"></a>
     <div class="header-actions">
@@ -25,6 +25,10 @@
   <p id="pwa-status" class="pwa-status" role="status" hidden></p>
 
   <main>
+    <section id="initial-loading" class="state-card" role="status">
+      <h1>Opening Homesteader...</h1>
+    </section>
+
     <section id="setup" class="state-card" hidden>
       <h1>Connect Homesteader to Firebase</h1>
       <p>Finish Firebase App Check setup and add the public reCAPTCHA site key to <code>public/firebase-config.js</code>, then reload this page.</p>

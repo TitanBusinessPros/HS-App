@@ -11,6 +11,8 @@ const $ = id => document.getElementById(id);
 const configured = firebaseConfig.apiKey && firebaseConfig.apiKey !== 'REPLACE_ME' && firebaseConfig.projectId !== 'REPLACE_ME' && firebaseConfig.appId !== 'REPLACE_ME' && appCheckSiteKey && appCheckSiteKey !== 'REPLACE_ME';
 if (!configured) {
   $('setup').hidden = false;
+  $('initial-loading').hidden = true;
+  document.body.classList.remove('app-loading');
 } else {
   start();
 }
@@ -80,6 +82,8 @@ function start() {
   }
   function showView(id) {
     for (const view of ['auth-view', 'member-view', 'admin-view']) $(view).hidden = view !== id;
+    $('initial-loading').hidden = true;
+    document.body.classList.remove('app-loading');
   }
   function cleanSubscriptions() {
     for (const unsub of [memberMessagesUnsub, memberConversationUnsub, profileUnsub, questionnaireUnsub, questionnaireConfigUnsub, skillsUnsub]) if (unsub) unsub();

@@ -40,6 +40,7 @@ let selectedUid = null;
 let selectedInterviewScheduled = false;
 let selectedInterviewSource = '';
 let calendarReady = false;
+let calendarInterviewSignature = null;
 let page = 0;
 let summariesUnsub = null;
 let blockedUnsub = null;
@@ -373,7 +374,7 @@ function renderCalendarAgenda(data) {
   }
 }
 
-async function loadCalendarStatus(generation = authGeneration) {
+async function loadCalendarStatus(generation = authGeneration, updateForm = true) {
   try {
     const { data } = await calendarStatus();
     if (generation !== authGeneration) return;
@@ -382,20 +383,22 @@ async function loadCalendarStatus(generation = authGeneration) {
       'Your bookable hours are saved. Invite an applicant below, or block time when you are unavailable.' :
       'Save your bookable hours to start accepting interview bookings.';
     renderCalendarAgenda(data);
-    const saved = data.availability || {
-      days: [1, 2, 3, 4, 5], startTime: '09:00', endTime: '17:00', durationMinutes: 30,
-      bufferMinutes: 15, leadHours: 24, horizonDays: 14,
-      timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/Chicago', timeZoneLabel: ''
-    };
-    for (const day of document.querySelectorAll('input[name="calendar-day"]')) day.checked = saved.days.includes(Number(day.value));
-    $('calendar-start').value = saved.startTime;
-    $('calendar-end').value = saved.endTime;
-    $('calendar-duration').value = String(saved.durationMinutes);
-    $('calendar-buffer').value = String(saved.bufferMinutes);
-    $('calendar-lead').value = String(saved.leadHours);
-    $('calendar-horizon').value = String(saved.horizonDays);
-    $('calendar-time-zone').value = saved.timeZone;
-    $('calendar-zone-label').value = saved.timeZoneLabel || readableTimeZone(new Date(), saved.timeZone);
+    if (updateForm) {
+      const saved = data.availability || {
+        days: [1, 2, 3, 4, 5], startTime: '09:00', endTime: '17:00', durationMinutes: 30,
+        bufferMinutes: 15, leadHours: 24, horizonDays: 14,
+        timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/Chicago', timeZoneLabel: ''
+      };
+      for (const day of document.querySelectorAll('input[name="calendar-day"]')) day.checked = saved.days.includes(Number(day.value));
+      $('calendar-start').value = saved.startTime;
+      $('calendar-end').value = saved.endTime;
+      $('calendar-duration').value = String(saved.durationMinutes);
+      $('calendar-buffer').value = String(saved.bufferMinutes);
+      $('calendar-lead').value = String(saved.leadHours);
+      $('calendar-horizon').value = String(saved.horizonDays);
+      $('calendar-time-zone').value = saved.timeZone;
+      $('calendar-zone-label').value = saved.timeZoneLabel || readableTimeZone(new Date(), saved.timeZone);
+    }
     if (selectedUid && !$('admin-detail').hidden) {
       $('send-booking-invite').disabled = !calendarReady || blocked.has(selectedUid) || selectedInterviewScheduled;
     }
@@ -702,6 +705,7 @@ onAuthStateChanged(auth, async user => {
   cleanSubscriptions();
   isMasterAdmin = false;
   calendarReady = false;
+  calendarInterviewSignature = null;
   $('admin-management').hidden = true;
   $('questionnaire-editor').hidden = true;
   $('add-skill-card').hidden = true;
@@ -752,8 +756,14 @@ onAuthStateChanged(auth, async user => {
       renderSkillCatalog();
     }, error => status('page-message', error.message || 'Could not load skill catalog.', true));
     summariesUnsub = onSnapshot(collection(db, 'applicantSummaries'), snapshot => {
+      if (generation !== authGeneration) return;
       applicants = snapshot.docs.map(item => ({ uid: item.id, ...item.data() }))
         .sort((a, b) => nameCollator.compare(a.name || '', b.name || '') || nameCollator.compare(a.email || '', b.email || ''));
+      const nextSignature = applicants.map(person => `${person.uid}:${person.interviewAt?.toMillis?.() || ''}`).join('|');
+      if (calendarInterviewSignature !== null && nextSignature !== calendarInterviewSignature) {
+        loadCalendarStatus(generation, false);
+      }
+      calendarInterviewSignature = nextSignature;
       if (selectedUid && !applicants.some(person => person.uid === selectedUid)) cleanSelection();
       renderList();
       renderRanking();

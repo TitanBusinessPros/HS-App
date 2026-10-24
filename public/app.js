@@ -8,6 +8,10 @@ import { normalizeExternalUrl } from './links.js';
 import { questions } from './questions.js';
 
 const $ = id => document.getElementById(id);
+$('open-private-profiles').addEventListener('click', event => {
+  event.preventDefault();
+  location.href = `profiles.html?open=${Date.now()}`;
+});
 const configured = firebaseConfig.apiKey && firebaseConfig.apiKey !== 'REPLACE_ME' && firebaseConfig.projectId !== 'REPLACE_ME' && firebaseConfig.appId !== 'REPLACE_ME' && appCheckSiteKey && appCheckSiteKey !== 'REPLACE_ME';
 if (!configured) {
   $('setup').hidden = false;

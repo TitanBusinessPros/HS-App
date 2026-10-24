@@ -23,7 +23,7 @@
     <section id="loading" class="state-card"><h1>Opening private profiles...</h1></section>
     <section id="access-message" class="state-card" hidden><h1>Private profiles</h1><p id="access-text">Sign in with an admin Google account to review profiles.</p><button id="retry-profiles" class="primary-button" type="button" hidden>Try again</button> <a class="primary-button button-link" href="./">Go to Homesteader</a></section>
     <section id="profiles-view" hidden>
-      <div class="page-intro"><span class="eyebrow">Admin workspace</span><h1>Applicant profiles</h1><p>Profiles are listed alphabetically. Select a person to load their full introduction, photos, skills, questionnaire, and private conversation.</p><a class="text-button" href="./">Back to admin home</a></div>
+      <div class="page-intro"><span class="eyebrow">Admin workspace</span><h1>Applicant profiles</h1><p>Review applicants, organize teams on the roster, and select a person to view their introduction, photos, skills, questionnaire, and private conversation.</p><a class="text-button" href="./">Back to admin home</a></div>
       <p id="page-message" class="message" role="status"></p>
       <section id="calendar-settings" class="card skill-ranking-card">
         <h2>My interview calendar</h2>
@@ -80,6 +80,30 @@
         <p class="muted">Only the master admin can remove another admin's access. Removed admins can no longer review applicants or send interview invitations.</p>
         <div id="admin-list" class="admin-list"></div>
         <p id="admin-management-message" class="message" role="status"></p>
+      </section>
+      <section id="roster" class="card skill-ranking-card">
+        <h2>Homestead roster</h2>
+        <p class="muted">Create teams for each area of work, then add as many applicants as you need. An applicant can belong to more than one team.</p>
+        <form id="create-team-form" class="roster-create-form">
+          <div><label for="new-team-name">New team name</label><input id="new-team-name" maxlength="80" required placeholder="For example, Chicken Farmers"></div>
+          <button class="primary-button" type="submit">Create team</button>
+        </form>
+        <p id="roster-message" class="message" role="status"></p>
+        <div class="roster-layout">
+          <div><h3>Teams</h3><div id="team-list" class="roster-team-list"></div><p id="team-empty" class="muted">No teams yet. Create one above.</p></div>
+          <div id="team-detail" hidden>
+            <div class="section-heading"><h3 id="team-title"></h3><span id="team-member-count" class="count">0</span></div>
+            <form id="rename-team-form" class="roster-rename-form"><div><label for="team-name">Team name</label><input id="team-name" maxlength="80" required></div><button class="secondary-button" type="submit">Rename team</button></form>
+            <form id="add-team-member-form" class="roster-add-form">
+              <label for="team-applicant-search">Find an applicant</label><input id="team-applicant-search" type="search" placeholder="Search by name or email">
+              <label for="team-applicant">Applicant to add</label><select id="team-applicant" required><option value="">Choose an applicant</option></select>
+              <button class="primary-button" type="submit">Add to team</button>
+            </form>
+            <p id="team-message" class="message" role="status"></p>
+            <h4>Team members</h4><div id="team-members" class="roster-members"></div><p id="team-members-empty" class="muted">No applicants on this team yet.</p>
+            <button id="delete-team" class="danger-button" type="button">Delete team</button>
+          </div>
+        </div>
       </section>
       <details id="questionnaire-editor" class="card questionnaire-editor-card" hidden>
         <summary>Manage questionnaire</summary>
@@ -197,5 +221,22 @@
   </footer>
   <script src="pwa.js" defer></script>
   <script type="module" src="profiles.js"></script>
+  <script>
+    (() => {
+      const retry = document.getElementById('retry-profiles');
+      const showLoadError = () => {
+        const loading = document.getElementById('loading');
+        if (loading.hidden) return;
+        loading.hidden = true;
+        document.getElementById('profiles-view').hidden = true;
+        document.getElementById('access-text').textContent = 'Could not finish loading private profiles. Check your connection and try again.';
+        retry.hidden = false;
+        document.getElementById('access-message').hidden = false;
+      };
+      retry.addEventListener('click', () => location.reload());
+      document.querySelector('script[type="module"]').addEventListener('error', showLoadError);
+      setTimeout(showLoadError, 40000);
+    })();
+  </script>
 </body>
 </html>

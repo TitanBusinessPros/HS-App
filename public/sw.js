@@ -1,4 +1,4 @@
-const CACHE_NAME = "homesteader-shell-v1";
+const CACHE_NAME = "homesteader-shell-v2";
 const APP_SCOPE = new URL(self.registration.scope);
 const SHELL_FILES = ["./", "./styles.css", "./pwa.js", "./manifest.webmanifest", "./favicon.ico", "./icons/icon-192.png", "./icons/icon-512.png"];
 

@@ -31,6 +31,8 @@ jobs:
           for page in public/*.html; do
             sed -i "s/<meta name=\"app-version\" content=\"local\">/<meta name=\"app-version\" content=\"$GITHUB_SHA\">/" "$page"
             grep -q "name=\"app-version\" content=\"$GITHUB_SHA\"" "$page"
+            sed -i -E "s/src=\"([^\"]+\.js)\"/src=\"\1?v=$GITHUB_SHA\"/g" "$page"
+            grep -q "\.js?v=$GITHUB_SHA" "$page" || ! grep -q '<script' "$page"
           done
       - name: Upload website
         uses: actions/upload-pages-artifact@v4

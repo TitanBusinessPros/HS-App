@@ -364,8 +364,74 @@ export const manageApplicant = onCall(options, async request => {
   if (action === 'delete') {
     try { await db.recursiveDelete(db.doc(`conversations/${uid}`)); }
     catch (error) { console.error('Conversation cleanup failed', error); }
+    try {
+      const teams = await db.collection('teams').get();
+      const writer = db.bulkWriter();
+      for (const team of teams.docs) writer.delete(team.ref.collection('members').doc(uid));
+      await writer.close();
+    } catch (error) { console.error('Team membership cleanup failed', error); }
   }
   return { done: true };
+});
+
+export const manageTeam = onCall(options, async request => {
+  const user = caller(request);
+  const action = request.data?.action;
+  const teamId = request.data?.teamId;
+  if (!['create', 'rename', 'delete'].includes(action) ||
+      (action !== 'create' && (typeof teamId !== 'string' || !/^[A-Za-z0-9]{20}$/.test(teamId)))) {
+    invalid('Choose a team and an action.');
+  }
+  const name = typeof request.data?.name === 'string' ? request.data.name.trim() : '';
+  if (action !== 'delete' && (!name || name.length > 80)) invalid('Enter a team name up to 80 characters.');
+  await assertAdmin(user.uid);
+  if (action !== 'delete') await checkText(name);
+  const teamRef = action === 'create' ? db.collection('teams').doc() : db.doc(`teams/${teamId}`);
+  await db.runTransaction(async transaction => {
+    await assertActive(transaction, user.uid);
+    if (!(await transaction.get(db.doc(`admins/${user.uid}`))).exists) {
+      throw new HttpsError('permission-denied', 'Admin access required.');
+    }
+    if (action === 'create') {
+      transaction.create(teamRef, { name, createdAt: FieldValue.serverTimestamp(), createdBy: user.uid });
+      return;
+    }
+    if (!(await transaction.get(teamRef)).exists) throw new HttpsError('not-found', 'Team not found.');
+    if (action === 'rename') transaction.update(teamRef, { name, updatedAt: FieldValue.serverTimestamp() });
+    else transaction.delete(teamRef);
+  });
+  if (action === 'delete') await db.recursiveDelete(teamRef);
+  return { teamId: teamRef.id };
+});
+
+export const setTeamMember = onCall(options, async request => {
+  const user = caller(request);
+  const teamId = request.data?.teamId;
+  const uid = request.data?.uid;
+  const action = request.data?.action;
+  if (typeof teamId !== 'string' || !/^[A-Za-z0-9]{20}$/.test(teamId) ||
+      typeof uid !== 'string' || !uid || uid.includes('/') || !['add', 'remove'].includes(action)) {
+    invalid('Choose a team, an applicant, and an action.');
+  }
+  await db.runTransaction(async transaction => {
+    await assertActive(transaction, user.uid);
+    if (!(await transaction.get(db.doc(`admins/${user.uid}`))).exists) {
+      throw new HttpsError('permission-denied', 'Admin access required.');
+    }
+    const teamRef = db.doc(`teams/${teamId}`);
+    if (!(await transaction.get(teamRef)).exists) throw new HttpsError('not-found', 'Team not found.');
+    const memberRef = teamRef.collection('members').doc(uid);
+    if (action === 'remove') {
+      transaction.delete(memberRef);
+      return;
+    }
+    const [profile, blocked] = await Promise.all([
+      transaction.get(db.doc(`users/${uid}`)), transaction.get(db.doc(`blockedUsers/${uid}`))
+    ]);
+    if (!profile.exists || blocked.exists) throw new HttpsError('failed-precondition', 'Choose an active applicant.');
+    transaction.set(memberRef, { addedAt: FieldValue.serverTimestamp(), addedBy: user.uid });
+  });
+  return { saved: true };
 });
 
 export const saveQuestionnaireConfig = onCall({ ...options, timeoutSeconds: 120 }, async request => {

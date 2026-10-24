@@ -33,6 +33,14 @@ service cloud.firestore {
       allow get, list: if isAdmin();
       allow write: if false;
     }
+    match /teams/{teamId} {
+      allow get, list: if isAdmin();
+      allow write: if false;
+      match /members/{uid} {
+        allow get, list: if isAdmin();
+        allow write: if false;
+      }
+    }
     match /questionnaires/{uid} {
       allow get: if owns(uid) || isAdmin();
       allow list, write: if false;

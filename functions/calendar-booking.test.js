@@ -15,6 +15,10 @@ test('a single block accepts the reported multi-day range and a full week', () =
   assert.equal(validBlockRange(start, end, now), true);
   assert.equal(validBlockRange(start, start + 7 * 24 * 60 * 60 * 1000, now), true);
   assert.equal(validBlockRange(start, start + 91 * 24 * 60 * 60 * 1000, now), false);
+  const minuteStart = Date.parse('2026-10-27T20:42:00Z');
+  const minuteEnd = Date.parse('2026-10-30T20:42:00Z');
+  assert.equal(validBlockRange(minuteStart, minuteEnd, now), true);
+  assert.equal(validBlockRange(minuteStart + 30_000, minuteEnd, now), false);
 });
 
 test('slots follow the admin time zone after daylight saving time ends', () => {

@@ -17,8 +17,8 @@ export function intervalsOverlap(firstStart, firstEnd, secondStart, secondEnd) {
   return firstStart < secondEnd && firstEnd > secondStart;
 }
 export function validBlockRange(start, end, now = Date.now()) {
-  return Number.isFinite(start) && Number.isFinite(end) && start % quarterHour === 0 &&
-    end % quarterHour === 0 && start >= now && end > start &&
+  return Number.isFinite(start) && Number.isFinite(end) && start % minuteMs === 0 &&
+    end % minuteMs === 0 && start >= now && end > start &&
     end - start <= 90 * dayMs && start <= now + 90 * dayMs;
 }
 export function bookingLockRefs(db, uid, start, end) {
@@ -163,11 +163,6 @@ export function createCalendarBooking({ db, caller, assertAdmin, checkText, opti
     if (current.blocks.some(block => intervalsOverlap(start, end, block.start.toMillis(), block.end.toMillis()))) {
       unavailable('Another blocked period overlaps that time.');
     }
-    if (current.interviews.some(item => {
-      const scheduled = item.scheduledAt.toMillis();
-      const finish = scheduled + (item.durationMinutes || 60) * minuteMs;
-      return intervalsOverlap(start, end, scheduled, finish);
-    })) unavailable('A scheduled interview overlaps that blocked time.');
     const id = randomBytes(16).toString('hex');
     const ref = blocksCollection(db, user.uid).doc(id);
     const revisionRef = calendarRevisionRef(db, user.uid);

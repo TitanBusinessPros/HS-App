@@ -1,6 +1,6 @@
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/13.1.0/firebase-app.js';
 import { getAuth, onAuthStateChanged, signOut } from 'https://www.gstatic.com/firebasejs/13.1.0/firebase-auth.js';
-import { getFirestore, doc, getDoc } from 'https://www.gstatic.com/firebasejs/13.1.0/firebase-firestore.js';
+import { getFirestore, doc, getDoc, onSnapshot } from 'https://www.gstatic.com/firebasejs/13.1.0/firebase-firestore.js';
 import { initializeAppCheck, ReCaptchaEnterpriseProvider } from 'https://www.gstatic.com/firebasejs/13.1.0/firebase-app-check.js';
 import { getFunctions, httpsCallable } from 'https://www.gstatic.com/firebasejs/13.1.0/firebase-functions.js';
 import { firebaseConfig, appCheckSiteKey } from './firebase-config.js';
@@ -12,6 +12,11 @@ initializeAppCheck(app, { provider: new ReCaptchaEnterpriseProvider(appCheckSite
 const auth = getAuth(app);
 const db = getFirestore(app);
 const saveQuestionnaire = httpsCallable(getFunctions(app, 'us-west2'), 'saveQuestionnaire');
+let currentQuestions = questions;
+let currentRevision = 0;
+let savedData = null;
+let configUnsub = null;
+let authGeneration = 0;
 
 function showAccess(message) {
   $('loading').hidden = true;
@@ -21,15 +26,15 @@ function showAccess(message) {
 }
 
 function updateProgress() {
-  const count = questions.filter((_, index) => document.querySelector(`input[name="answer-${index}"]:checked`)).length;
-  $('questionnaire-progress').textContent = `${count} of ${questions.length} answered`;
+  const count = currentQuestions.filter((_, index) => document.querySelector(`input[name="answer-${index}"]:checked`)).length;
+  $('questionnaire-progress').textContent = `${count} of ${currentQuestions.length} answered`;
 }
 
 function renderQuestions(savedAnswers = []) {
   const list = $('questions-list');
   list.replaceChildren();
   let currentSection = '';
-  questions.forEach((question, index) => {
+  currentQuestions.forEach((question, index) => {
     if (question.section !== currentSection) {
       currentSection = question.section;
       const heading = document.createElement('h2');
@@ -62,6 +67,13 @@ function renderQuestions(savedAnswers = []) {
 }
 
 onAuthStateChanged(auth, async user => {
+  const generation = ++authGeneration;
+  if (configUnsub) configUnsub();
+  configUnsub = null;
+  savedData = null;
+  currentQuestions = questions;
+  currentRevision = 0;
+  $('questions-list').replaceChildren();
   $('account-email').textContent = user?.email || '';
   $('sign-out').hidden = !user;
   if (!user) return showAccess('Open Homesteader and sign in with Google to take the questionnaire.');
@@ -72,12 +84,33 @@ onAuthStateChanged(auth, async user => {
     if ((await getDoc(doc(db, 'admins', user.uid))).exists()) return showAccess('Admins do not need an applicant questionnaire.');
     if (!(await getDoc(doc(db, 'users', user.uid))).exists()) return showAccess('Save your applicant profile first, then return to the questionnaire.');
     const saved = await getDoc(doc(db, 'questionnaires', user.uid));
-    renderQuestions(saved.exists() && saved.data().version === 1 ? saved.data().answers : []);
-    $('loading').hidden = true;
-    $('access-message').hidden = true;
-    $('questionnaire-view').hidden = false;
+    if (generation !== authGeneration) return;
+    savedData = saved.exists() ? saved.data() : null;
+    configUnsub = onSnapshot(doc(db, 'questionnaireConfig', 'main'), snapshot => {
+      if (generation !== authGeneration) return;
+      const config = snapshot.data();
+      if (config?.enabled === false) return showAccess('The homesteading questionnaire is currently turned off.');
+      const previousRevision = currentRevision;
+      const pendingAnswers = currentQuestions.map((_, index) => {
+        const selected = document.querySelector(`input[name="answer-${index}"]:checked`);
+        return selected ? Number(selected.value) : null;
+      });
+      currentQuestions = config?.questions || questions;
+      currentRevision = config?.questionRevision || 0;
+      const questionValues = value => JSON.stringify(value.map(question =>
+        [question.section, question.prompt, question.choices]));
+      const legacyQuestionsMatch = savedData?.version === 1 &&
+        questionValues(currentQuestions) === questionValues(questions);
+      const savedAnswers = (config && savedData?.version === 2 && savedData.revision === currentRevision) ||
+        legacyQuestionsMatch ? savedData.answers : [];
+      $('questionnaire-intro').textContent = `Answer these ${currentQuestions.length} questions about your experience, availability, and approach to homesteading. Only you and Homesteader admins can see your answers. You can return to update them.`;
+      renderQuestions(previousRevision === currentRevision && pendingAnswers.some(answer => answer !== null) ? pendingAnswers : savedAnswers);
+      $('loading').hidden = true;
+      $('access-message').hidden = true;
+      $('questionnaire-view').hidden = false;
+    }, error => showAccess(`Could not open the questionnaire: ${error.message || 'Please try again.'}`));
   } catch (error) {
-    showAccess(`Could not open the questionnaire: ${error.message || 'Please try again.'}`);
+    if (generation === authGeneration) showAccess(`Could not open the questionnaire: ${error.message || 'Please try again.'}`);
   }
 });
 
@@ -88,24 +121,28 @@ $('sign-out').addEventListener('click', async () => {
 
 $('questionnaire-form').addEventListener('submit', async event => {
   event.preventDefault();
-  const answers = questions.map((_, index) => {
+  const answers = currentQuestions.map((_, index) => {
     const selected = document.querySelector(`input[name="answer-${index}"]:checked`);
     return selected ? Number(selected.value) : null;
   });
   const message = $('questionnaire-message');
   if (answers.some(answer => answer === null)) {
     message.className = 'message error';
-    message.textContent = 'Please answer all 30 questions before saving.';
+    message.textContent = `Please answer all ${currentQuestions.length} questions before saving.`;
     return;
   }
   const button = $('save-questionnaire');
+  const submittedRevision = currentRevision;
   button.disabled = true;
   message.textContent = 'Saving your answers...';
   message.className = 'message';
   try {
-    await saveQuestionnaire({ answers });
+    await saveQuestionnaire({ answers, revision: submittedRevision });
+    savedData = { version: submittedRevision ? 2 : 1, revision: submittedRevision, answers };
     message.className = 'message success';
-    message.textContent = 'Your answers have been saved for admin review.';
+    message.textContent = submittedRevision === currentRevision ?
+      'Your answers have been saved for admin review.' :
+      'Your answers were saved, but the questions changed. Please review the current questionnaire.';
   } catch (error) {
     message.className = 'message error';
     message.textContent = error.message || 'Could not save your answers. Please try again.';

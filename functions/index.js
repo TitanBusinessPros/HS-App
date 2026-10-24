@@ -18,6 +18,7 @@ const reviewStatuses = new Set(['submitted', 'reviewing', 'good-fit', 'declined'
 const customSkillPattern = /^custom_[a-f0-9]{32}$/;
 const applicationLimit = 500;
 const applicationStatsRef = db.doc('applicationStats/main');
+const questionnaireConfigRef = db.doc('questionnaireConfig/main');
 
 function validSkillId(id) {
   return (Number.isInteger(id) && id >= 0 && id < 100) ||
@@ -285,23 +286,86 @@ export const manageApplicant = onCall(options, async request => {
   return { done: true };
 });
 
+export const saveQuestionnaireConfig = onCall({ ...options, timeoutSeconds: 120 }, async request => {
+  const user = caller(request);
+  const enabled = request.data?.enabled;
+  const expectedRevision = request.data?.expectedRevision;
+  const rawQuestions = request.data?.questions;
+  if (typeof enabled !== 'boolean' || !Number.isInteger(expectedRevision) || expectedRevision < 0 ||
+      !Array.isArray(rawQuestions) || rawQuestions.length > 100 || (enabled && !rawQuestions.length)) {
+    invalid('Add at least one question before turning on the questionnaire.');
+  }
+  let textLength = 0;
+  const questions = rawQuestions.map(item => {
+    const section = typeof item?.section === 'string' ? item.section.trim() : '';
+    const prompt = typeof item?.prompt === 'string' ? item.prompt.trim() : '';
+    const rawChoices = item?.choices;
+    if (!section || section.length > 80 || !prompt || prompt.length > 500 ||
+        !Array.isArray(rawChoices) || rawChoices.length < 2 || rawChoices.length > 6) {
+      invalid('Each question needs a section, a prompt, and 2 to 6 answers.');
+    }
+    const choices = rawChoices.map(choice => typeof choice === 'string' ? choice.trim() : '');
+    if (choices.some(choice => !choice || choice.length > 200)) {
+      invalid('Keep each answer between 1 and 200 characters.');
+    }
+    textLength += section.length + prompt.length + choices.join('').length;
+    return { section, prompt, choices };
+  });
+  if (textLength > 30000) invalid('Shorten the questionnaire before saving.');
+  await assertAdmin(user.uid);
+  const text = questions.map(question => [question.section, question.prompt, ...question.choices].join('\n')).join('\n');
+  for (let index = 0; index < text.length; index += 5000) await checkText(text.slice(index, index + 5000));
+  const revision = await db.runTransaction(async transaction => {
+    await assertActive(transaction, user.uid);
+    const [admin, current] = await Promise.all([
+      transaction.get(db.doc(`admins/${user.uid}`)), transaction.get(questionnaireConfigRef)
+    ]);
+    if (!admin.exists) throw new HttpsError('permission-denied', 'Admin access required.');
+    const currentRevision = current.data()?.revision || 0;
+    if (currentRevision !== expectedRevision) {
+      throw new HttpsError('aborted', 'The questionnaire changed in another session. Reload before saving.');
+    }
+    const nextRevision = currentRevision + 1;
+    const questionValues = value => JSON.stringify(value?.map(question =>
+      [question.section, question.prompt, question.choices]));
+    const questionsChanged = questionValues(current.data()?.questions) !== questionValues(questions);
+    const questionRevision = (current.data()?.questionRevision || 0) + (questionsChanged ? 1 : 0);
+    transaction.set(questionnaireConfigRef, {
+      enabled, revision: nextRevision, questionRevision, questions,
+      updatedBy: user.uid, updatedAt: FieldValue.serverTimestamp()
+    });
+    return nextRevision;
+  });
+  return { revision };
+});
+
 export const saveQuestionnaire = onCall(options, async request => {
   const user = caller(request);
   const answers = request.data?.answers;
-  if (!Array.isArray(answers) || answers.length !== 30 ||
-      answers.some(answer => !Number.isInteger(answer) || answer < 0 || answer > 3)) {
-    invalid('Answer all 30 questions before submitting.');
-  }
+  if (!Array.isArray(answers) || answers.length > 100) invalid('Answer every question before submitting.');
   await db.runTransaction(async transaction => {
     await assertActive(transaction, user.uid);
-    const [admin, profile] = await Promise.all([
+    const [admin, profile, configuration] = await Promise.all([
       transaction.get(db.doc(`admins/${user.uid}`)),
-      transaction.get(db.doc(`users/${user.uid}`))
+      transaction.get(db.doc(`users/${user.uid}`)),
+      transaction.get(questionnaireConfigRef)
     ]);
     if (admin.exists || !profile.exists) throw new HttpsError('failed-precondition', 'Save your applicant profile before taking the questionnaire.');
+    const config = configuration.data();
+    if (config?.enabled === false) throw new HttpsError('failed-precondition', 'The questionnaire is currently turned off.');
+    if ((config?.questionRevision || 0) !== (request.data?.revision ?? 0)) {
+      throw new HttpsError('aborted', 'The questionnaire changed. Refresh the page before saving your answers.');
+    }
+    const questions = config?.questions;
+    const choiceCounts = questions ? questions.map(question => question.choices.length) : Array(30).fill(4);
+    if (!choiceCounts.length || answers.length !== choiceCounts.length || answers.some((answer, index) =>
+      !Number.isInteger(answer) || answer < 0 || answer >= choiceCounts[index])) {
+      invalid('Answer every current question before submitting. Refresh the page if the questionnaire changed.');
+    }
     transaction.set(db.doc(`questionnaires/${user.uid}`), {
-      version: 1,
+      version: questions ? 2 : 1,
       answers,
+      ...(questions ? { revision: config.questionRevision, questions } : {}),
       submittedAt: FieldValue.serverTimestamp()
     });
     transaction.set(db.doc(`applicantSummaries/${user.uid}`), {
@@ -417,7 +481,7 @@ export const addSkill = onCall(options, async request => {
 export const saveSkills = onCall({ ...options, timeoutSeconds: 120 }, async request => {
   const user = caller(request);
   const raw = request.data?.entries;
-  if (!Array.isArray(raw) || raw.length > 200) invalid('Too many skills were selected.');
+  if (!Array.isArray(raw) || raw.length > 10) invalid('Choose no more than 10 skills.');
   const seen = new Set();
   const entries = raw.map(item => {
     const id = item?.id;

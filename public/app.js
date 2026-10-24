@@ -5,6 +5,7 @@ import { initializeAppCheck, ReCaptchaEnterpriseProvider } from 'https://www.gst
 import { getFunctions, httpsCallable } from 'https://www.gstatic.com/firebasejs/13.1.0/firebase-functions.js';
 import { firebaseConfig, appCheckSiteKey } from './firebase-config.js';
 import { normalizeExternalUrl } from './links.js';
+import { questions } from './questions.js';
 
 const $ = id => document.getElementById(id);
 const configured = firebaseConfig.apiKey && firebaseConfig.apiKey !== 'REPLACE_ME' && firebaseConfig.projectId !== 'REPLACE_ME' && firebaseConfig.appId !== 'REPLACE_ME' && appCheckSiteKey && appCheckSiteKey !== 'REPLACE_ME';
@@ -31,6 +32,9 @@ function start() {
   let memberConversationUnsub = null;
   let profileUnsub = null;
   let questionnaireUnsub = null;
+  let questionnaireConfigUnsub = null;
+  let questionnaireSaved = null;
+  let questionnaireSettings = null;
   let skillsUnsub = null;
   let authGeneration = 0;
   const photoPreview = document.createElement('img');
@@ -78,8 +82,22 @@ function start() {
     for (const view of ['auth-view', 'member-view', 'admin-view']) $(view).hidden = view !== id;
   }
   function cleanSubscriptions() {
-    for (const unsub of [memberMessagesUnsub, memberConversationUnsub, profileUnsub, questionnaireUnsub, skillsUnsub]) if (unsub) unsub();
-    memberMessagesUnsub = memberConversationUnsub = profileUnsub = questionnaireUnsub = skillsUnsub = null;
+    for (const unsub of [memberMessagesUnsub, memberConversationUnsub, profileUnsub, questionnaireUnsub, questionnaireConfigUnsub, skillsUnsub]) if (unsub) unsub();
+    memberMessagesUnsub = memberConversationUnsub = profileUnsub = questionnaireUnsub = questionnaireConfigUnsub = skillsUnsub = null;
+  }
+  function updateQuestionnaireStatus() {
+    if (!questionnaireSaved) {
+      $('questionnaire-status').textContent = 'Not completed yet.';
+      return;
+    }
+    const currentQuestions = questionnaireSettings?.questions || questions;
+    const questionValues = value => JSON.stringify(value.map(question =>
+      [question.section, question.prompt, question.choices]));
+    const current = questionnaireSaved.version === 2 ?
+      questionnaireSaved.revision === (questionnaireSettings?.questionRevision || 0) :
+      questionnaireSaved.version === 1 && questionValues(currentQuestions) === questionValues(questions);
+    $('questionnaire-status').textContent = current ?
+      'Completed. You can update your answers.' : 'The questions changed. Please update your answers.';
   }
   $('google-sign-in').addEventListener('click', async () => {
     const button = $('google-sign-in');
@@ -100,6 +118,8 @@ function start() {
     cleanSubscriptions();
     currentUser = user;
     currentProfile = null;
+    questionnaireSaved = null;
+    questionnaireSettings = null;
     profileInitialized = false;
     pendingPhotos = null;
     $('sign-out').hidden = !user;
@@ -126,7 +146,13 @@ function start() {
         showView('member-view');
         watchProfile(user.uid);
         questionnaireUnsub = onSnapshot(doc(db, 'questionnaires', user.uid), snapshot => {
-          $('questionnaire-status').textContent = snapshot.exists() ? 'Completed. You can update your answers.' : 'Not completed yet.';
+          questionnaireSaved = snapshot.exists() ? snapshot.data() : null;
+          updateQuestionnaireStatus();
+        }, error => status('profile-message', readableError(error), true));
+        questionnaireConfigUnsub = onSnapshot(doc(db, 'questionnaireConfig', 'main'), snapshot => {
+          questionnaireSettings = snapshot.data() || null;
+          $('questionnaire-section').hidden = questionnaireSettings?.enabled === false;
+          updateQuestionnaireStatus();
         }, error => status('profile-message', readableError(error), true));
         skillsUnsub = onSnapshot(doc(db, 'skills', user.uid), snapshot => {
           const count = snapshot.exists() ? (snapshot.data().entries || []).length : 0;

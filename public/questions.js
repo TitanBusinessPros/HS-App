@@ -1,4 +1,4 @@
-// Version 1. Keep the order stable because saved answers use each question's index.
+// Legacy version 1 questions. Keep this order stable for previously saved answers.
 export const questions = [
   { section: 'Your plans', prompt: 'How much hands-on homesteading experience do you have?', choices: ['I am new to it', 'I have helped occasionally', 'I have managed several projects', 'I have run a homestead or farm'] },
   { section: 'Your plans', prompt: 'What interests you most about homesteading?', choices: ['Growing food', 'Caring for animals', 'Building and maintaining a place', 'A mix of all three'] },

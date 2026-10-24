@@ -19,6 +19,7 @@ const setReviewStatus = httpsCallable(functions, 'setReviewStatus');
 const manageApplicant = httpsCallable(functions, 'manageApplicant');
 const manageInterview = httpsCallable(functions, 'manageInterview');
 const addSkill = httpsCallable(functions, 'addSkill');
+const saveQuestionnaireConfig = httpsCallable(functions, 'saveQuestionnaireConfig');
 const pageSize = 25;
 const nameCollator = new Intl.Collator(undefined, { sensitivity: 'base' });
 let currentUser = null;
@@ -36,6 +37,11 @@ let conversationUnsub = null;
 let messagesUnsub = null;
 let rankingsUnsub = null;
 let catalogUnsub = null;
+let questionnaireConfigUnsub = null;
+let questionnaireDraft = [];
+let questionnaireEnabled = true;
+let questionnaireRevision = 0;
+let questionnaireDirty = false;
 let catalog = buildSkillCatalog();
 let selectedSkillData = null;
 let rankings = [];
@@ -76,8 +82,8 @@ function cleanSelection() {
 
 function cleanSubscriptions() {
   cleanSelection();
-  for (const unsub of [summariesUnsub, blockedUnsub, rankingsUnsub, catalogUnsub]) if (unsub) unsub();
-  summariesUnsub = blockedUnsub = rankingsUnsub = catalogUnsub = null;
+  for (const unsub of [summariesUnsub, blockedUnsub, rankingsUnsub, catalogUnsub, questionnaireConfigUnsub]) if (unsub) unsub();
+  summariesUnsub = blockedUnsub = rankingsUnsub = catalogUnsub = questionnaireConfigUnsub = null;
   rankings = [];
 }
 
@@ -279,13 +285,15 @@ function renderInterviewEditor(interview) {
 }
 
 function renderQuestionnaire(data) {
-  const complete = data?.version === 1 && Array.isArray(data.answers) && data.answers.length === questions.length;
+  const submittedQuestions = data?.version === 2 && Array.isArray(data.questions) ? data.questions : questions;
+  const complete = (data?.version === 1 || data?.version === 2) &&
+    Array.isArray(data.answers) && data.answers.length === submittedQuestions.length;
   $('questionnaire-summary').textContent = complete ? 'Questionnaire: complete' : 'Questionnaire: not completed';
   $('questionnaire-results').open = false;
   const list = $('questionnaire-answers');
   list.replaceChildren();
   if (!complete) return;
-  questions.forEach((question, index) => {
+  submittedQuestions.forEach((question, index) => {
     const row = document.createElement('div');
     row.className = 'questionnaire-answer';
     const prompt = document.createElement('strong');
@@ -296,6 +304,113 @@ function renderQuestionnaire(data) {
     list.append(row);
   });
 }
+
+function markQuestionnaireDirty() {
+  questionnaireDirty = true;
+  status('questionnaire-editor-message', 'Unsaved questionnaire changes.');
+}
+
+function questionInput(labelText, value, maxLength, id, onInput) {
+  const label = document.createElement('label');
+  label.htmlFor = id;
+  label.textContent = labelText;
+  const input = document.createElement('input');
+  input.id = id;
+  input.value = value;
+  input.maxLength = maxLength;
+  input.required = true;
+  input.addEventListener('input', () => { onInput(input.value); markQuestionnaireDirty(); });
+  return [label, input];
+}
+
+function renderQuestionnaireEditor() {
+  $('questionnaire-enabled').checked = questionnaireEnabled;
+  $('questionnaire-question-count').textContent = `${questionnaireDraft.length} questions. Each question needs 2 to 6 answers; the limit is 100 questions.`;
+  $('add-question').disabled = questionnaireDraft.length >= 100;
+  const list = $('questionnaire-editor-list');
+  list.replaceChildren();
+  questionnaireDraft.forEach((question, index) => {
+    const card = document.createElement('div');
+    card.className = 'questionnaire-editor-question';
+    const heading = document.createElement('div');
+    heading.className = 'section-heading';
+    const title = document.createElement('h3');
+    title.textContent = `Question ${index + 1}`;
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'text-button';
+    remove.textContent = 'Delete question';
+    remove.addEventListener('click', () => {
+      questionnaireDraft.splice(index, 1);
+      markQuestionnaireDirty();
+      renderQuestionnaireEditor();
+    });
+    heading.append(title, remove);
+    card.append(heading);
+    card.append(...questionInput('Section', question.section, 80, `question-section-${index}`, value => { question.section = value; }));
+    card.append(...questionInput('Question', question.prompt, 500, `question-prompt-${index}`, value => { question.prompt = value; }));
+    question.choices.forEach((choice, choiceIndex) => {
+      const row = document.createElement('div');
+      row.className = 'questionnaire-choice-editor';
+      row.append(...questionInput(`Answer ${choiceIndex + 1}`, choice, 200,
+        `question-${index}-choice-${choiceIndex}`, value => { question.choices[choiceIndex] = value; }));
+      const removeChoice = document.createElement('button');
+      removeChoice.type = 'button';
+      removeChoice.className = 'text-button';
+      removeChoice.textContent = 'Delete answer';
+      removeChoice.disabled = question.choices.length <= 2;
+      removeChoice.addEventListener('click', () => {
+        question.choices.splice(choiceIndex, 1);
+        markQuestionnaireDirty();
+        renderQuestionnaireEditor();
+      });
+      row.append(removeChoice);
+      card.append(row);
+    });
+    const addChoice = document.createElement('button');
+    addChoice.type = 'button';
+    addChoice.className = 'text-button';
+    addChoice.textContent = 'Add answer';
+    addChoice.disabled = question.choices.length >= 6;
+    addChoice.addEventListener('click', () => {
+      question.choices.push('');
+      markQuestionnaireDirty();
+      renderQuestionnaireEditor();
+    });
+    card.append(addChoice);
+    list.append(card);
+  });
+}
+
+$('questionnaire-enabled').addEventListener('change', event => {
+  questionnaireEnabled = event.target.checked;
+  markQuestionnaireDirty();
+});
+$('add-question').addEventListener('click', () => {
+  if (questionnaireDraft.length >= 100) return;
+  questionnaireDraft.push({ section: '', prompt: '', choices: ['', ''] });
+  markQuestionnaireDirty();
+  renderQuestionnaireEditor();
+  $('questionnaire-editor-list').lastElementChild?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+});
+$('questionnaire-editor-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  const button = $('save-questionnaire-config');
+  button.disabled = true;
+  status('questionnaire-editor-message', 'Saving questionnaire...');
+  try {
+    const result = await saveQuestionnaireConfig({
+      enabled: questionnaireEnabled, expectedRevision: questionnaireRevision, questions: questionnaireDraft
+    });
+    questionnaireRevision = result.data.revision;
+    questionnaireDirty = false;
+    status('questionnaire-editor-message', questionnaireEnabled ? 'Questionnaire saved and on.' : 'Questionnaire saved and off.');
+  } catch (error) {
+    status('questionnaire-editor-message', error.message || 'Could not save questionnaire.', true);
+  } finally {
+    button.disabled = false;
+  }
+});
 
 function renderApplicantSkills(data) {
   const entries = data?.version === 1 && Array.isArray(data.entries) ? data.entries : [];
@@ -422,6 +537,8 @@ $('rank-skill').addEventListener('change', () => {
 onAuthStateChanged(auth, async user => {
   const generation = ++authGeneration;
   cleanSubscriptions();
+  questionnaireDirty = false;
+  $('questionnaire-editor-form').hidden = true;
   currentUser = user;
   applicants = [];
   blocked = new Map();
@@ -439,6 +556,22 @@ onAuthStateChanged(auth, async user => {
     $('loading').hidden = true;
     $('access-message').hidden = true;
     $('profiles-view').hidden = false;
+    questionnaireConfigUnsub = onSnapshot(doc(db, 'questionnaireConfig', 'main'), snapshot => {
+      if (generation !== authGeneration) return;
+      const config = snapshot.data();
+      const revision = config?.revision || 0;
+      if (questionnaireDirty) {
+        if (revision !== questionnaireRevision) status('questionnaire-editor-message', 'Another admin changed the questionnaire. Reload this page before saving.', true);
+        return;
+      }
+      questionnaireRevision = revision;
+      questionnaireEnabled = config?.enabled !== false;
+      questionnaireDraft = (config?.questions || questions).map(question => ({
+        section: question.section, prompt: question.prompt, choices: [...question.choices]
+      }));
+      renderQuestionnaireEditor();
+      $('questionnaire-editor-form').hidden = false;
+    }, error => status('questionnaire-editor-message', error.message || 'Could not load questionnaire settings.', true));
     catalogUnsub = onSnapshot(collection(db, 'skillCatalog'), snapshot => {
       if (generation !== authGeneration) return;
       catalog = buildSkillCatalog(snapshot.docs.map(item => ({ id: item.id, ...item.data() })));

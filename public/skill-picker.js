@@ -48,7 +48,11 @@ function renderCatalog() {
       button.addEventListener('click', () => {
         const key = String(skill.id);
         if (selected.has(key)) selected.delete(key);
-        else selected.set(key, { id: skill.id, years: '', organization: '' });
+        else if (selected.size >= 10) {
+          $('skills-message').className = 'message error';
+          $('skills-message').textContent = 'Choose no more than 10 skills. Remove one before adding another.';
+          return;
+        } else selected.set(key, { id: skill.id, years: '', organization: '' });
         renderCatalog();
         renderSelected();
       });
@@ -62,7 +66,7 @@ function renderCatalog() {
     empty.textContent = 'No matching skills.';
     list.append(empty);
   }
-  $('selected-count').textContent = `${selected.size} skills selected`;
+  $('selected-count').textContent = `${selected.size} of 10 skills selected`;
 }
 
 function renderSelected() {
@@ -168,6 +172,11 @@ $('skills-form').addEventListener('submit', async event => {
     organization: entry.organization.trim()
   }));
   const message = $('skills-message');
+  if (entries.length > 10) {
+    message.className = 'message error';
+    message.textContent = 'Choose no more than 10 skills before saving.';
+    return;
+  }
   if (entries.some(entry => !Number.isFinite(entry.years) || entry.years < 0 || entry.years > 80 ||
       !Number.isInteger(entry.years * 2) || entry.organization.length < 2)) {
     message.className = 'message error';

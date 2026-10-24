@@ -37,6 +37,10 @@ service cloud.firestore {
       allow get: if owns(uid) || isAdmin();
       allow list, write: if false;
     }
+    match /questionnaireConfig/{configId} {
+      allow get: if active() && configId == 'main';
+      allow list, write: if false;
+    }
     match /skills/{uid} {
       allow get: if owns(uid) || isAdmin();
       allow list, write: if false;

@@ -19,6 +19,18 @@
     <section id="profiles-view" hidden>
       <div class="page-intro"><span class="eyebrow">Admin workspace</span><h1>Applicant profiles</h1><p>Profiles are listed alphabetically. Select a person to load their full introduction, photos, skills, questionnaire, and private conversation.</p><a class="text-button" href="./">Back to admin home</a></div>
       <p id="page-message" class="message" role="status"></p>
+      <details class="card questionnaire-editor-card">
+        <summary>Manage questionnaire</summary>
+        <p class="muted">Edit sections, questions, and answer choices. Turning the questionnaire off hides it from applicants and stops new answers. Saved answers remain available for review.</p>
+        <form id="questionnaire-editor-form" hidden>
+          <label class="questionnaire-toggle"><input id="questionnaire-enabled" type="checkbox"> Questionnaire is on</label>
+          <p id="questionnaire-question-count" class="field-help"></p>
+          <div id="questionnaire-editor-list"></div>
+          <button id="add-question" class="secondary-button" type="button">Add question</button>
+          <button id="save-questionnaire-config" class="primary-button" type="submit">Save questionnaire</button>
+          <p id="questionnaire-editor-message" class="message" role="status"></p>
+        </form>
+      </details>
       <section class="card skill-ranking-card">
         <h2>Add a homestead skill</h2>
         <p class="muted">New skills appear in the applicant skill picker and the admin rankings.</p>

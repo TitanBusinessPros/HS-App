@@ -114,11 +114,12 @@
       </section>
       <section id="skill-rankings" class="card skill-ranking-card">
         <div class="section-heading"><h2>Rank applicants by skill</h2><span id="skill-rank-count" class="count">0</span></div>
-        <p class="muted">Choose a skill. Applicants with the most reported years appear first. Organization details are supplied by applicants and should be checked with them.</p>
+        <p class="muted">Choose a skill to see the top 10 applicants by reported years of experience, with an option to view up to 25. Organization details are supplied by applicants and should be checked with them.</p>
         <label for="rank-skill">Choose a skill</label><select id="rank-skill"><option value="">Choose a skill</option></select>
+        <p id="rank-summary" class="field-help" hidden></p>
         <div id="rank-list" class="rank-list"></div>
         <p id="rank-empty" class="muted">Choose a skill to see its ranking.</p>
-        <div class="pagination"><button id="rank-previous" class="text-button" type="button">Previous</button><span id="rank-page-label">Page 1 of 1</span><button id="rank-next" class="text-button" type="button">Next</button></div>
+        <div class="ranking-controls"><button id="rank-show-more" class="text-button" type="button" aria-controls="rank-list" aria-expanded="false" hidden>View top 25</button></div>
       </section>
       <div class="admin-grid">
         <aside class="card applicant-list-card">

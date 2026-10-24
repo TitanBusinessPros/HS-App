@@ -58,6 +58,7 @@
 .skill-ranking-card{margin-bottom:22px}
 .skill-ranking-card>p{margin:12px 0}
 .rank-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:10px;margin-top:17px}
+.ranking-controls{text-align:center;margin-top:17px}
 .rank-row{display:grid;gap:5px;padding:13px;border:1px solid #dce5d9;border-radius:9px;background:#f8fbf6;color:#203529;text-align:left}
 .rank-row:hover{background:#eaf3e8;border-color:#9bb89b}
 .rank-row span{font-size:.78rem;color:#627567;overflow-wrap:anywhere}

@@ -71,7 +71,7 @@ let questionnaireDirty = false;
 let catalog = buildSkillCatalog();
 let selectedSkillData = null;
 let rankings = [];
-let rankPage = 0;
+let rankLimit = 10;
 let authGeneration = 0;
 const linkedApplicantUid = new URLSearchParams(location.search).get('applicant');
 let linkedApplicantOpened = false;
@@ -185,24 +185,27 @@ function rankedApplicants() {
 
 function renderRanking() {
   const sorted = rankedApplicants();
+  if (sorted.length <= 10) rankLimit = 10;
   const byUid = new Map(applicants.map(person => [person.uid, person]));
-  const pages = Math.max(1, Math.ceil(sorted.length / pageSize));
-  rankPage = Math.min(rankPage, pages - 1);
   $('skill-rank-count').textContent = String(sorted.length);
-  $('rank-page-label').textContent = `Page ${rankPage + 1} of ${pages}`;
-  $('rank-previous').disabled = rankPage === 0;
-  $('rank-next').disabled = rankPage >= pages - 1;
+  const shown = sorted.slice(0, rankLimit);
+  $('rank-summary').hidden = !sorted.length;
+  $('rank-summary').textContent = sorted.length ? `Showing top ${shown.length} of ${sorted.length} applicants.` : '';
+  $('rank-show-more').hidden = sorted.length <= 10;
+  $('rank-show-more').setAttribute('aria-expanded', String(rankLimit === 25));
+  $('rank-show-more').textContent = rankLimit === 10 ?
+    `View top ${Math.min(25, sorted.length)}` : 'Show top 10';
   $('rank-empty').hidden = sorted.length > 0;
   $('rank-empty').textContent = $('rank-skill').value ? 'No applicants have reported this skill yet.' : 'Choose a skill to see its ranking.';
   const list = $('rank-list');
   list.replaceChildren();
-  sorted.slice(rankPage * pageSize, (rankPage + 1) * pageSize).forEach((entry, index) => {
+  shown.forEach((entry, index) => {
     const person = byUid.get(entry.uid);
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'rank-row';
     const heading = document.createElement('strong');
-    heading.textContent = `${rankPage * pageSize + index + 1}. ${person.name || 'Unnamed'} — ${entry.years} ${entry.years === 1 ? 'year' : 'years'}`;
+    heading.textContent = `${index + 1}. ${person.name || 'Unnamed'} — ${entry.years} ${entry.years === 1 ? 'year' : 'years'}`;
     const detail = document.createElement('span');
     detail.textContent = `${entry.organization} · ${person.email || ''}`;
     button.append(heading, detail);
@@ -904,6 +907,7 @@ function renderSkillCatalog() {
     if (rankingsUnsub) rankingsUnsub();
     rankingsUnsub = null;
     rankings = [];
+    rankLimit = 10;
     renderRanking();
   }
   if (selectedUid) renderApplicantSkills(selectedSkillData);
@@ -919,7 +923,7 @@ $('rank-skill').addEventListener('change', () => {
   if (rankingsUnsub) rankingsUnsub();
   rankingsUnsub = null;
   rankings = [];
-  rankPage = 0;
+  rankLimit = 10;
   renderRanking();
   const id = $('rank-skill').value;
   if (id === '') return;
@@ -948,6 +952,7 @@ onAuthStateChanged(auth, async user => {
   applicants = [];
   blocked = new Map();
   $('rank-skill').value = '';
+  rankLimit = 10;
   renderRanking();
   $('account-email').textContent = user?.email || '';
   $('sign-out').hidden = !user;
@@ -1158,8 +1163,7 @@ $('calendar-block-form').addEventListener('submit', async event => {
 $('applicant-search').addEventListener('input', () => { page = 0; renderList(); });
 $('previous-page').addEventListener('click', () => { if (page > 0) { page--; renderList(); } });
 $('next-page').addEventListener('click', () => { if ((page + 1) * pageSize < filteredApplicants().length) { page++; renderList(); } });
-$('rank-previous').addEventListener('click', () => { if (rankPage > 0) { rankPage--; renderRanking(); } });
-$('rank-next').addEventListener('click', () => { if ((rankPage + 1) * pageSize < rankedApplicants().length) { rankPage++; renderRanking(); } });
+$('rank-show-more').addEventListener('click', () => { rankLimit = rankLimit === 10 ? 25 : 10; renderRanking(); });
 
 for (const radio of document.querySelectorAll('input[name="interview-mode"]')) radio.addEventListener('change', toggleMeetingLink);
 $('booking-invite-mode').addEventListener('change', () => {

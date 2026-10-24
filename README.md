@@ -24,7 +24,7 @@ Additional admins must first sign in with Google, then receive an `admins/{uid}`
 
 The web app uses the score-based reCAPTCHA Enterprise provider for Firebase App Check. The key is registered for `titanbusinesspros.github.io`. **No reCAPTCHA Classic secret key is needed.** In Firebase Console, the App Check token time to live (TTL) is **1 hour**, the recommended default. The SDK refreshes tokens automatically. The App Check risk threshold is 0.5.
 
-App Check enforcement is enabled for Firebase Authentication and Cloud Firestore. All six callable Cloud Functions also require App Check. Firebase Storage is unused; its deployed rules deny all client reads and writes. If a custom domain is added, add it to the reCAPTCHA Enterprise key's allowed domains and to Firebase Authentication's authorized domains.
+App Check enforcement is enabled for Firebase Authentication and Cloud Firestore. All four callable Cloud Functions also require App Check. Firebase Storage is unused; its deployed rules deny all client reads and writes. If a custom domain is added, add it to the reCAPTCHA Enterprise key's allowed domains and to Firebase Authentication's authorized domains.
 
 ## Profiles and security
 
@@ -52,10 +52,6 @@ Cloud Functions are in `functions/index.js`: `saveProfile`, `saveQuestionnaire`,
 - `conversations/{applicantUid}` and its `messages` subcollection: one private applicant/admin conversation.
 
 All other Firestore paths are denied by default. The separate Firebase project does not migrate or delete data from the previous software.
-
-## Project memory
-
-[`PROJECT_MEMORY.md`](PROJECT_MEMORY.md) records the current product decisions, architecture, deployment state, and known verification gap for future work on this repository.
 
 ## Deployment
 

@@ -6,16 +6,22 @@
   <meta name="theme-color" content="#234837">
   <meta name="description" content="A private place to introduce yourself to the Homesteader team.">
   <title>Homesteader</title>
+  <link rel="icon" href="favicon.ico" sizes="any">
+  <link rel="icon" type="image/png" sizes="96x96" href="icons/favicon-96x96.png">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="manifest" href="manifest.webmanifest">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
   <header class="site-header">
     <a class="brand" href="./" aria-label="Homesteader home"><span class="brand-mark">H</span><span>Homesteader</span></a>
     <div class="header-actions">
+      <div class="pwa-actions"><button id="install-app" class="pwa-button" type="button">Install app</button><button id="update-app" class="pwa-button" type="button">Update app</button></div>
       <span id="account-email" class="account-email" hidden></span>
       <button id="sign-out" type="button" class="text-button" hidden>Sign out</button>
     </div>
   </header>
+  <p id="pwa-status" class="pwa-status" role="status" hidden></p>
 
   <main>
     <section id="setup" class="state-card" hidden>
@@ -112,6 +118,7 @@
       <a class="secondary-button button-link" href="homestead.html">Edit homestead page</a>
     </section>
   </main>
+  <script src="pwa.js" defer></script>
   <script type="module" src="app.js"></script>
 </body>
 </html>

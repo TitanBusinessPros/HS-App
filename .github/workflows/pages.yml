@@ -25,6 +25,9 @@ jobs:
         uses: actions/checkout@v6
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v5
+      - name: Stamp published app version
+        run: |
+          printf '{"version":"%s"}\n' "$GITHUB_SHA" > public/version.json
       - name: Upload website
         uses: actions/upload-pages-artifact@v4
         with:

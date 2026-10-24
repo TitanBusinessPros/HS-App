@@ -6,13 +6,18 @@
   <meta name="theme-color" content="#234837">
   <meta name="robots" content="noindex,nofollow">
   <title>Homesteader Questionnaire</title>
+  <link rel="icon" href="favicon.ico" sizes="any">
+  <link rel="icon" type="image/png" sizes="96x96" href="icons/favicon-96x96.png">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="manifest" href="manifest.webmanifest">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
   <header class="site-header">
     <a class="brand" href="./" aria-label="Homesteader home"><span class="brand-mark">H</span><span>Homesteader</span></a>
-    <div class="header-actions"><span id="account-email" class="account-email"></span><button id="sign-out" class="text-button" type="button" hidden>Sign out</button></div>
+    <div class="header-actions"><div class="pwa-actions"><button id="install-app" class="pwa-button" type="button">Install app</button><button id="update-app" class="pwa-button" type="button">Update app</button></div><span id="account-email" class="account-email"></span><button id="sign-out" class="text-button" type="button" hidden>Sign out</button></div>
   </header>
+  <p id="pwa-status" class="pwa-status" role="status" hidden></p>
   <main>
     <section id="loading" class="state-card"><h1>Loading questionnaire...</h1></section>
     <section id="access-message" class="state-card" hidden><h1>Sign in to continue</h1><p id="access-text">Open Homesteader and sign in with Google to take the questionnaire.</p><a class="primary-button button-link" href="./">Go to Homesteader</a></section>
@@ -26,6 +31,7 @@
       </form>
     </section>
   </main>
+  <script src="pwa.js" defer></script>
   <script type="module" src="questionnaire.js"></script>
 </body>
 </html>

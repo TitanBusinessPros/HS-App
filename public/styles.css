@@ -86,3 +86,10 @@
 .interview-options input[type=radio]{width:auto;padding:0;margin:0;box-shadow:none;accent-color:#234837}
 .interview-admin-section .review-row{align-items:center;margin-top:16px}
 .interview-admin-section .review-row .primary-button{margin-top:0}
+.site-header{min-height:78px;height:auto;gap:12px}
+.pwa-actions{display:flex;gap:7px;align-items:center}
+.pwa-button{border:1px solid #abc2aa;border-radius:8px;background:#fffefa;color:#234837;padding:8px 10px;font-size:.8rem;font-weight:700;white-space:nowrap}
+.pwa-button:hover,.pwa-button:focus-visible{background:#edf4eb;border-color:#3e7051}
+.pwa-button.update-available{background:#234837;color:#fff}
+.pwa-status{max-width:1220px;margin:0 auto;padding:9px 24px;color:#234837;font-size:.85rem;background:#edf4eb}
+@media(max-width:700px){.site-header{padding:10px 15px}.site-header .brand span:last-child{display:none}.header-actions{gap:8px}.pwa-button{font-size:.73rem;padding:7px 8px}.pwa-status{padding:9px 15px}}

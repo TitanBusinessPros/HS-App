@@ -31,6 +31,9 @@
 .choice{display:flex;align-items:flex-start;gap:10px;margin:7px 0;padding:8px 10px;border-radius:8px;font-weight:400;cursor:pointer}
 .choice:hover{background:#f2f6ef}
 .choice input[type=radio]{width:auto;flex:none;margin:3px 0 0;padding:0;box-shadow:none;accent-color:#234837}
+.written-answer{margin:8px 10px 0}
+.written-answer label{margin:0 0 8px}
+.written-answer textarea{min-height:92px}
 .pagination{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:12px;font-size:.78rem;color:#627567}
 .pagination button{font-size:.78rem}
 .pagination button:disabled{opacity:.4;cursor:default}
@@ -39,7 +42,7 @@
 .questionnaire-results{margin:27px 0;padding:18px;border:1px solid #dce5d9;border-radius:10px;background:#f8fbf6}
 .questionnaire-answer{display:grid;gap:5px;padding:11px 0;border-bottom:1px solid #e2e9df;font-size:.85rem}
 .questionnaire-answer:last-child{border-bottom:0}
-.questionnaire-answer span{color:#526b57}
+.questionnaire-answer span{color:#526b57;white-space:pre-wrap;overflow-wrap:anywhere}
 .skills-page{max-width:900px;margin:0 auto}
 .skill-picker-card{margin-bottom:22px}
 .skill-category-heading{font-family:Fraunces,Georgia,serif;font-size:1.25rem;margin:28px 0 12px}
@@ -99,10 +102,12 @@
 .admin-row span{font-size:.78rem;color:#627567}
 .admin-row .danger-button{flex:none}
 @media(max-width:520px){.admin-row{align-items:flex-start;flex-direction:column}}
-.brand-logo{display:block;width:62px;height:62px;object-fit:contain}
+.brand-logo{display:block;width:186px;height:186px;object-fit:contain;animation:brand-float 3.5s ease-in-out infinite}
+@keyframes brand-float{0%,100%{transform:translateY(0)}50%{transform:translateY(-10px)}}
+@media(prefers-reduced-motion:reduce){.brand-logo{animation:none}}
 #admin-view{text-align:center}
 #admin-view .button-link{margin:8px 5px 0}
-@media(max-width:700px){.brand-logo{width:54px;height:54px}}
+@media(max-width:700px){.brand-logo{width:162px;height:162px}}
 body{display:flex;flex-direction:column}
 main{width:100%;flex:1}
 .app-loading .site-footer{visibility:hidden}

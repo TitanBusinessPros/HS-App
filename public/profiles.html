@@ -15,13 +15,13 @@
 </head>
 <body>
   <header class="site-header">
-    <a class="brand" href="./" aria-label="Homesteader home"><img class="brand-logo" src="icons/favicon-96x96.png" alt="" width="62" height="62"></a>
+    <a class="brand" href="./" aria-label="Homesteader home"><img class="brand-logo" src="icons/icon-512.png" alt="" width="186" height="186"></a>
     <div class="header-actions"><div class="pwa-actions"><button id="install-app" class="pwa-button" type="button">Install app</button><button id="update-app" class="pwa-button update-available" type="button" hidden>Update available</button></div><span id="account-email" class="account-email"></span><button id="sign-out" class="text-button" type="button" hidden>Sign out</button></div>
   </header>
   <p id="pwa-status" class="pwa-status" role="status" hidden></p>
   <main>
     <section id="loading" class="state-card"><h1>Opening private profiles...</h1></section>
-    <section id="access-message" class="state-card" hidden><h1>Admin access required</h1><p id="access-text">Sign in with an admin Google account to review profiles.</p><a class="primary-button button-link" href="./">Go to Homesteader</a></section>
+    <section id="access-message" class="state-card" hidden><h1>Private profiles</h1><p id="access-text">Sign in with an admin Google account to review profiles.</p><button id="retry-profiles" class="primary-button" type="button" hidden>Try again</button> <a class="primary-button button-link" href="./">Go to Homesteader</a></section>
     <section id="profiles-view" hidden>
       <div class="page-intro"><span class="eyebrow">Admin workspace</span><h1>Applicant profiles</h1><p>Profiles are listed alphabetically. Select a person to load their full introduction, photos, skills, questionnaire, and private conversation.</p><a class="text-button" href="./">Back to admin home</a></div>
       <p id="page-message" class="message" role="status"></p>

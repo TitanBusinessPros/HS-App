@@ -25,8 +25,19 @@ function showAccess(message) {
   $('access-message').hidden = false;
 }
 
+function readAnswers() {
+  return currentQuestions.map((question, index) => {
+    const written = $(`written-answer-${index}`)?.value.trim() || '';
+    if (!question.choices.length) return written ? { text: written } : null;
+    const selected = document.querySelector(`input[name="answer-${index}"]:checked`);
+    if (!selected) return null;
+    if (selected.value === 'written') return written ? { text: written } : null;
+    return Number(selected.value);
+  });
+}
+
 function updateProgress() {
-  const count = currentQuestions.filter((_, index) => document.querySelector(`input[name="answer-${index}"]:checked`)).length;
+  const count = readAnswers().filter(answer => answer !== null).length;
   $('questionnaire-progress').textContent = `${count} of ${currentQuestions.length} answered`;
 }
 
@@ -47,6 +58,19 @@ function renderQuestions(savedAnswers = []) {
     const legend = document.createElement('legend');
     legend.textContent = `${index + 1}. ${question.prompt}`;
     fieldset.append(legend);
+    const written = document.createElement('div');
+    written.className = 'written-answer';
+    written.hidden = question.choices.length > 0 && typeof savedAnswers[index]?.text !== 'string';
+    const writtenLabel = document.createElement('label');
+    writtenLabel.htmlFor = `written-answer-${index}`;
+    writtenLabel.textContent = 'Your written answer (up to 500 characters)';
+    const writtenInput = document.createElement('textarea');
+    writtenInput.id = `written-answer-${index}`;
+    writtenInput.rows = 3;
+    writtenInput.maxLength = 500;
+    writtenInput.value = typeof savedAnswers[index]?.text === 'string' ? savedAnswers[index].text : '';
+    writtenInput.addEventListener('input', updateProgress);
+    written.append(writtenLabel, writtenInput);
     question.choices.forEach((choice, choiceIndex) => {
       const label = document.createElement('label');
       label.className = 'choice';
@@ -55,12 +79,31 @@ function renderQuestions(savedAnswers = []) {
       input.name = `answer-${index}`;
       input.value = String(choiceIndex);
       input.checked = savedAnswers[index] === choiceIndex;
-      input.addEventListener('change', updateProgress);
+      input.addEventListener('change', () => { written.hidden = true; updateProgress(); });
       const span = document.createElement('span');
       span.textContent = choice;
       label.append(input, span);
       fieldset.append(label);
     });
+    if (question.choices.length) {
+      const label = document.createElement('label');
+      label.className = 'choice';
+      const input = document.createElement('input');
+      input.type = 'radio';
+      input.name = `answer-${index}`;
+      input.value = 'written';
+      input.checked = typeof savedAnswers[index]?.text === 'string';
+      input.addEventListener('change', () => {
+        written.hidden = false;
+        writtenInput.focus();
+        updateProgress();
+      });
+      const span = document.createElement('span');
+      span.textContent = 'Write my own answer';
+      label.append(input, span);
+      fieldset.append(label);
+    }
+    fieldset.append(written);
     list.append(fieldset);
   });
   updateProgress();
@@ -91,10 +134,7 @@ onAuthStateChanged(auth, async user => {
       const config = snapshot.data();
       if (config?.enabled === false) return showAccess('The homesteading questionnaire is currently turned off.');
       const previousRevision = currentRevision;
-      const pendingAnswers = currentQuestions.map((_, index) => {
-        const selected = document.querySelector(`input[name="answer-${index}"]:checked`);
-        return selected ? Number(selected.value) : null;
-      });
+      const pendingAnswers = readAnswers();
       currentQuestions = config?.questions || questions;
       currentRevision = config?.questionRevision || 0;
       const questionValues = value => JSON.stringify(value.map(question =>
@@ -103,7 +143,7 @@ onAuthStateChanged(auth, async user => {
         questionValues(currentQuestions) === questionValues(questions);
       const savedAnswers = (config && savedData?.version === 2 && savedData.revision === currentRevision) ||
         legacyQuestionsMatch ? savedData.answers : [];
-      $('questionnaire-intro').textContent = `Answer these ${currentQuestions.length} questions about your experience, availability, and approach to homesteading. Only you and Homesteader admins can see your answers. You can return to update them.`;
+      $('questionnaire-intro').textContent = `Answer these ${currentQuestions.length} questions about your experience, availability, and approach to homesteading. Choose a preset answer or write your own for each question. Only you and Homesteader admins can see your answers. You can return to update them.`;
       renderQuestions(previousRevision === currentRevision && pendingAnswers.some(answer => answer !== null) ? pendingAnswers : savedAnswers);
       $('loading').hidden = true;
       $('access-message').hidden = true;
@@ -121,14 +161,11 @@ $('sign-out').addEventListener('click', async () => {
 
 $('questionnaire-form').addEventListener('submit', async event => {
   event.preventDefault();
-  const answers = currentQuestions.map((_, index) => {
-    const selected = document.querySelector(`input[name="answer-${index}"]:checked`);
-    return selected ? Number(selected.value) : null;
-  });
+  const answers = readAnswers();
   const message = $('questionnaire-message');
   if (answers.some(answer => answer === null)) {
     message.className = 'message error';
-    message.textContent = `Please answer all ${currentQuestions.length} questions before saving.`;
+    message.textContent = `Please choose or write an answer for all ${currentQuestions.length} questions before saving.`;
     return;
   }
   const button = $('save-questionnaire');

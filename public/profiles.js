@@ -74,11 +74,22 @@ function status(id, text, error = false) {
   element.className = `message ${error ? 'error' : 'success'}`;
 }
 
-function showAccess(message) {
+function showAccess(message, retry = false) {
   $('loading').hidden = true;
   $('profiles-view').hidden = true;
   $('access-text').textContent = message;
+  $('retry-profiles').hidden = !retry;
   $('access-message').hidden = false;
+}
+
+function timed(promise, label, milliseconds = 12000) {
+  let timer;
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`${label} took too long. Check your connection and try again.`)), milliseconds);
+    })
+  ]).finally(() => clearTimeout(timer));
 }
 
 function cleanSelection() {
@@ -464,7 +475,9 @@ function renderQuestionnaire(data) {
     const prompt = document.createElement('strong');
     prompt.textContent = `${index + 1}. ${question.prompt}`;
     const answer = document.createElement('span');
-    answer.textContent = question.choices[data.answers[index]] || 'No answer';
+    const selected = data.answers[index];
+    answer.textContent = Number.isInteger(selected) ? (question.choices[selected] || 'No answer') :
+      typeof selected?.text === 'string' ? `Written answer: ${selected.text}` : 'No answer';
     row.append(prompt, answer);
     list.append(row);
   });
@@ -490,7 +503,7 @@ function questionInput(labelText, value, maxLength, id, onInput) {
 
 function renderQuestionnaireEditor() {
   $('questionnaire-enabled').checked = questionnaireEnabled;
-  $('questionnaire-question-count').textContent = `${questionnaireDraft.length} questions. Each question needs 2 to 6 answers; the limit is 100 questions.`;
+  $('questionnaire-question-count').textContent = `${questionnaireDraft.length} questions. Each can have 0 to 6 preset answers; applicants can always write their own answer. The limit is 100 questions.`;
   $('add-question').disabled = questionnaireDraft.length >= 100;
   const list = $('questionnaire-editor-list');
   list.replaceChildren();
@@ -523,7 +536,7 @@ function renderQuestionnaireEditor() {
       removeChoice.type = 'button';
       removeChoice.className = 'text-button';
       removeChoice.textContent = 'Delete answer';
-      removeChoice.disabled = question.choices.length <= 2;
+      removeChoice.disabled = false;
       removeChoice.addEventListener('click', () => {
         question.choices.splice(choiceIndex, 1);
         markQuestionnaireDirty();
@@ -553,7 +566,7 @@ $('questionnaire-enabled').addEventListener('change', event => {
 });
 $('add-question').addEventListener('click', () => {
   if (questionnaireDraft.length >= 100) return;
-  questionnaireDraft.push({ section: '', prompt: '', choices: ['', ''] });
+  questionnaireDraft.push({ section: '', prompt: '', choices: [] });
   markQuestionnaireDirty();
   renderQuestionnaireEditor();
   $('questionnaire-editor-list').lastElementChild?.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -686,6 +699,10 @@ function renderSkillCatalog() {
 
 renderSkillCatalog();
 
+const initialAuthTimer = setTimeout(() => {
+  if (!$('loading').hidden) showAccess('Sign-in is taking too long. Check your connection and try again.', true);
+}, 15000);
+
 $('rank-skill').addEventListener('change', () => {
   if (rankingsUnsub) rankingsUnsub();
   rankingsUnsub = null;
@@ -701,6 +718,7 @@ $('rank-skill').addEventListener('change', () => {
 });
 
 onAuthStateChanged(auth, async user => {
+  clearTimeout(initialAuthTimer);
   const generation = ++authGeneration;
   cleanSubscriptions();
   isMasterAdmin = false;
@@ -720,10 +738,25 @@ onAuthStateChanged(auth, async user => {
   $('sign-out').hidden = !user;
   if (!user) return showAccess('Sign in with an admin Google account to review profiles.');
   try {
-    const token = await user.getIdTokenResult();
+    const token = await timed(user.getIdTokenResult(), 'Sign-in');
     if (token.claims.firebase?.sign_in_provider !== 'google.com') return showAccess('Sign in with Google to continue.');
-    if ((await getDoc(doc(db, 'blockedUsers', user.uid))).exists()) return showAccess('This account cannot use Homesteader.');
-    if (!(await getDoc(doc(db, 'admins', user.uid))).exists()) return showAccess('Only Homesteader admins can view applicant profiles.');
+    let blockedRecord;
+    let adminRecord;
+    try {
+      [blockedRecord, adminRecord] = await timed(Promise.all([
+        getDoc(doc(db, 'blockedUsers', user.uid)),
+        getDoc(doc(db, 'admins', user.uid))
+      ]), 'Checking admin access');
+    } catch (error) {
+      if (!error.message?.includes('took too long')) throw error;
+      // The callable checks the same active admin records on the server and
+      // can recover when this browser's Firestore read transport stalls.
+      await timed(calendarStatus(), 'Checking admin access');
+      blockedRecord = { exists: () => false };
+      adminRecord = { exists: () => true };
+    }
+    if (blockedRecord.exists()) return showAccess('This account cannot use Homesteader.');
+    if (!adminRecord.exists()) return showAccess('Only Homesteader admins can view applicant profiles.');
     if (generation !== authGeneration) return;
     isMasterAdmin = user.email?.toLowerCase() === masterAdminEmail;
     $('admin-management').hidden = !isMasterAdmin;
@@ -785,11 +818,15 @@ onAuthStateChanged(auth, async user => {
       }
     }, error => status('page-message', error.message || 'Could not load blocked accounts.', true));
   } catch (error) {
-    if (generation === authGeneration) showAccess(`Could not open private profiles: ${error.message || 'Please try again.'}`);
+    if (generation === authGeneration) showAccess(`Could not open private profiles: ${error.message || 'Please try again.'}`, true);
   }
+}, error => {
+  clearTimeout(initialAuthTimer);
+  showAccess(`Could not check your sign-in: ${error.message || 'Please try again.'}`, true);
 });
 
 $('sign-out').addEventListener('click', async () => { await signOut(auth); location.href = './'; });
+$('retry-profiles').addEventListener('click', () => location.reload());
 $('calendar-availability-form').addEventListener('submit', async event => {
   event.preventDefault();
   const button = event.submitter || event.target.querySelector('button[type="submit"]');

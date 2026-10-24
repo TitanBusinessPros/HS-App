@@ -383,8 +383,8 @@ export const saveQuestionnaireConfig = onCall({ ...options, timeoutSeconds: 120 
     const prompt = typeof item?.prompt === 'string' ? item.prompt.trim() : '';
     const rawChoices = item?.choices;
     if (!section || section.length > 80 || !prompt || prompt.length > 500 ||
-        !Array.isArray(rawChoices) || rawChoices.length < 2 || rawChoices.length > 6) {
-      invalid('Each question needs a section, a prompt, and 2 to 6 answers.');
+        !Array.isArray(rawChoices) || rawChoices.length > 6) {
+      invalid('Each question needs a section, a prompt, and no more than 6 preset answers.');
     }
     const choices = rawChoices.map(choice => typeof choice === 'string' ? choice.trim() : '');
     if (choices.some(choice => !choice || choice.length > 200)) {
@@ -425,6 +425,21 @@ export const saveQuestionnaire = onCall(options, async request => {
   const user = caller(request);
   const answers = request.data?.answers;
   if (!Array.isArray(answers) || answers.length > 100) invalid('Answer every question before submitting.');
+  const normalizedAnswers = answers.map(answer => {
+    if (Number.isInteger(answer)) return answer;
+    if (!answer || typeof answer !== 'object' || Array.isArray(answer) || typeof answer.text !== 'string') {
+      invalid('Choose an answer or write your own response for every question.');
+    }
+    const written = answer.text.trim();
+    if (!written || written.length > 500) invalid('Keep each written answer between 1 and 500 characters.');
+    return { text: written };
+  });
+  const writtenText = normalizedAnswers.filter(answer => typeof answer === 'object')
+    .map(answer => answer.text).join('\n');
+  if (writtenText.length > 30000) invalid('Shorten your written answers before saving.');
+  for (let index = 0; index < writtenText.length; index += 5000) {
+    await checkText(writtenText.slice(index, index + 5000));
+  }
   await db.runTransaction(async transaction => {
     await assertActive(transaction, user.uid);
     const [admin, profile, configuration] = await Promise.all([
@@ -440,13 +455,13 @@ export const saveQuestionnaire = onCall(options, async request => {
     }
     const questions = config?.questions;
     const choiceCounts = questions ? questions.map(question => question.choices.length) : Array(30).fill(4);
-    if (!choiceCounts.length || answers.length !== choiceCounts.length || answers.some((answer, index) =>
-      !Number.isInteger(answer) || answer < 0 || answer >= choiceCounts[index])) {
-      invalid('Answer every current question before submitting. Refresh the page if the questionnaire changed.');
+    if (!choiceCounts.length || normalizedAnswers.length !== choiceCounts.length || normalizedAnswers.some((answer, index) =>
+      Number.isInteger(answer) && (answer < 0 || answer >= choiceCounts[index]))) {
+      invalid('Choose an answer or write your own response for every current question. Refresh if the questionnaire changed.');
     }
     transaction.set(db.doc(`questionnaires/${user.uid}`), {
       version: questions ? 2 : 1,
-      answers,
+      answers: normalizedAnswers,
       ...(questions ? { revision: config.questionRevision, questions } : {}),
       submittedAt: FieldValue.serverTimestamp()
     });

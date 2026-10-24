@@ -6,6 +6,7 @@ import { getFunctions, httpsCallable } from 'https://www.gstatic.com/firebasejs/
 import { firebaseConfig, appCheckSiteKey } from './firebase-config.js';
 import { questions } from './questions.js';
 import { buildSkillCatalog } from './skills.js';
+import { normalizeExternalUrl } from './links.js';
 
 const $ = id => document.getElementById(id);
 const app = initializeApp(firebaseConfig);
@@ -214,6 +215,23 @@ function renderProfile(person) {
   $('detail-email').textContent = person.email || '';
   $('detail-location').textContent = person.profile?.location ? `Location: ${person.profile.location}` : 'Location not provided';
   $('detail-bio').textContent = person.bio || 'No introduction yet.';
+  const links = $('detail-links');
+  links.replaceChildren();
+  for (const [label, raw] of [
+    ['Website', person.website],
+    ...(Array.isArray(person.socialLinks) ? person.socialLinks.slice(0, 3).map((url, index) => [`Social media ${index + 1}`, url]) : [])
+  ]) {
+    try {
+      const href = normalizeExternalUrl(raw);
+      if (!href) continue;
+      const anchor = document.createElement('a');
+      anchor.href = href;
+      anchor.target = '_blank';
+      anchor.rel = 'noopener noreferrer';
+      anchor.textContent = `${label}: ${new URL(href).hostname}`;
+      links.append(anchor);
+    } catch { /* Ignore invalid links in older profile records. */ }
+  }
   photoPreview.hidden = true;
   $('detail-photos').replaceChildren();
   const photos = person.photos || (person.photoDataUrl ? [person.photoDataUrl] : []);

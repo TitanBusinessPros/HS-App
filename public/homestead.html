@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#234837">
+  <meta name="robots" content="noindex,nofollow">
+  <title>About the Homestead | Homesteader</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="site-header">
+    <a class="brand" href="./" aria-label="Homesteader home"><span class="brand-mark">H</span><span>Homesteader</span></a>
+    <div class="header-actions"><span id="account-email" class="account-email"></span><button id="sign-out" class="text-button" type="button" hidden>Sign out</button></div>
+  </header>
+  <main class="homestead-page">
+    <section id="loading" class="state-card"><h1>Opening the homestead...</h1></section>
+    <section id="access-message" class="state-card" hidden><h1>Sign in to continue</h1><p id="access-text">Sign in with Google to see the homestead.</p><a class="primary-button button-link" href="./">Go to Homesteader</a></section>
+    <section id="page-view" hidden>
+      <div class="page-intro"><span class="eyebrow">Meet the place</span><h1 id="homestead-name">About the homestead</h1><a class="text-button" href="./">Back to Homesteader</a></div>
+      <p id="page-message" class="message" role="status"></p>
+      <div id="homestead-empty" class="card"><p>The homestead team is preparing this page.</p></div>
+      <div id="homestead-content" hidden>
+        <section id="homestead-about-section" class="card homestead-section"><h2>About this homestead</h2><p id="homestead-description" class="homestead-description"></p></section>
+        <section id="homestead-details-section" class="card homestead-section"><h2>Homestead details</h2><div id="homestead-details" class="homestead-details"></div></section>
+        <section class="card homestead-section"><div class="section-heading"><h2>Photos of the homestead</h2><span id="homestead-photo-count" class="count">0</span></div><div id="homestead-gallery" class="homestead-gallery"></div><p id="homestead-no-photos" class="muted">Photos will appear here when the team adds them.</p></section>
+      </div>
+      <section id="admin-editor" class="card homestead-section" hidden>
+        <span class="eyebrow">Admin editor</span><h2>Edit the homestead page</h2>
+        <p class="muted">Applicants can see this page after you save it. You can add or remove detail topics at any time.</p>
+        <form id="homestead-form">
+          <label for="edit-homestead-name">Homestead name</label><input id="edit-homestead-name" maxlength="100" required>
+          <label for="edit-homestead-description">Description</label><textarea id="edit-homestead-description" rows="12" maxlength="30000" required placeholder="Tell applicants about the land, daily life, and your plans."></textarea><p id="description-count" class="field-count">0 / 2,000 words</p>
+          <div class="section-heading"><h3>Information topics</h3><button id="add-topic" class="secondary-button" type="button">Add information</button></div>
+          <p class="field-help">You can remove any suggested topic and add your own, such as “Vegan only.” Leave a detail blank to hide it from the page.</p>
+          <div id="topic-editor"></div>
+          <button id="save-homestead" class="primary-button" type="submit">Save homestead page</button><p id="save-page-message" class="message" role="status"></p>
+        </form>
+        <div class="homestead-photo-editor"><h3>Manage photos</h3><p class="muted">Add up to 20 JPG, PNG, or WebP photos. Images are screened before they appear. You can remove photos from the gallery above.</p><input id="add-homestead-photos" type="file" accept="image/jpeg,image/png,image/webp" multiple><p id="photo-upload-message" class="message" role="status"></p></div>
+      </section>
+    </section>
+  </main>
+  <script type="module" src="homestead.js"></script>
+</body>
+</html>

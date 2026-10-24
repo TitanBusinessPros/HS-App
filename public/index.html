@@ -56,6 +56,13 @@
             <p class="field-help">Share your background, interests, skills, and what you hope to find in a homestead. Up to 500 words.</p>
             <textarea id="profile-bio" rows="9" maxlength="6000" required placeholder="A little about me..."></textarea>
             <div id="word-count" class="field-count">0 / 500 words</div>
+            <label for="profile-website">Website <span class="optional">optional</span></label>
+            <input id="profile-website" type="text" inputmode="url" maxlength="300" placeholder="https://yourwebsite.com">
+            <p class="field-help">Your website and social links are visible only to admins. Use HTTPS links.</p>
+            <label for="profile-social-1">Social media links <span class="optional">optional, up to 3</span></label>
+            <input id="profile-social-1" type="text" inputmode="url" maxlength="300" placeholder="Social media page 1">
+            <input id="profile-social-2" type="text" inputmode="url" maxlength="300" placeholder="Social media page 2" aria-label="Social media page 2">
+            <input id="profile-social-3" type="text" inputmode="url" maxlength="300" placeholder="Social media page 3" aria-label="Social media page 3">
             <label for="profile-photo">Photos <span class="optional">optional</span></label>
             <div id="photo-list" class="photo-list"></div>
             <input id="profile-photo" type="file" accept="image/jpeg,image/png,image/webp" multiple>
@@ -75,6 +82,7 @@
             <a class="secondary-button button-link" href="skills.html">Add your homestead skills</a>
             <p id="skills-status" class="field-help">No skills added yet.</p>
           </div>
+          <div class="questionnaire-link"><h2>About the homestead</h2><p class="muted">See the land, living arrangements, and other details shared by the homestead team.</p><a class="secondary-button button-link" href="homestead.html">View the homestead</a></div>
         </div>
         <aside class="card inbox-card">
           <div class="inbox-heading"><span class="inbox-icon" aria-hidden="true">✉</span><div><span class="eyebrow">Private conversation</span><h2>Inbox</h2></div></div>
@@ -93,6 +101,7 @@
       <h1>Review applicants</h1>
       <p>Profiles, skill rankings, questionnaire answers, and private conversations are on the admin-only profiles page.</p>
       <a class="primary-button button-link" href="profiles.html">Open private profiles</a>
+      <a class="secondary-button button-link" href="homestead.html">Edit homestead page</a>
     </section>
   </main>
   <script type="module" src="app.js"></script>

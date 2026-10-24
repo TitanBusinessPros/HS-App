@@ -49,6 +49,16 @@ service cloud.firestore {
       allow get, list: if isAdmin();
       allow write: if false;
     }
+    match /homesteadPage/{pageId} {
+      allow get: if active() && pageId == 'main';
+      allow list, write: if false;
+    }
+    match /homesteadPhotos/{photoId} {
+      allow get, list: if isAdmin() || (active() &&
+        exists(/databases/$(database)/documents/homesteadPage/main) &&
+        get(/databases/$(database)/documents/homesteadPage/main).data.published == true);
+      allow write: if false;
+    }
     match /conversations/{uid} {
       allow get: if owns(uid) || isAdmin();
       allow list: if isAdmin();

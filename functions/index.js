@@ -79,15 +79,36 @@ function validPhotos(value) {
   return value;
 }
 
+function cleanExternalUrl(value) {
+  const raw = typeof value === 'string' ? value.trim() : '';
+  if (!raw) return '';
+  if (raw.length > 300) invalid('Keep each website or social media link under 300 characters.');
+  let url;
+  try {
+    url = new URL(raw.includes('://') ? raw : `https://${raw}`);
+  } catch {
+    invalid('Enter a valid website or social media link.');
+  }
+  if (url.protocol !== 'https:' || !url.hostname.includes('.') || url.username || url.password) {
+    invalid('Use an HTTPS website or social media link.');
+  }
+  return url.href;
+}
+
 function cleanProfile(value) {
   const profile = value?.profile;
   const name = typeof profile?.name === 'string' ? profile.name.trim() : '';
   const location = typeof profile?.location === 'string' ? profile.location.trim() : '';
   const bio = typeof value?.bio === 'string' ? value.bio.trim() : '';
+  const website = cleanExternalUrl(value?.website);
+  const socialLinks = value?.socialLinks ?? [];
+  if (!Array.isArray(socialLinks) || socialLinks.length > 3) invalid('Add no more than three social media links.');
+  const cleanedLinks = socialLinks.map(cleanExternalUrl).filter(Boolean);
+  if (new Set(cleanedLinks).size !== cleanedLinks.length) invalid('Use a different page for each social media link.');
   if (typeof name !== 'string' || !name || name.length > 40 || typeof location !== 'string' || location.length > 100 || typeof bio !== 'string' || !bio || bio.length > 6000 || bio.split(/\s+/).length > 500) {
     invalid('Add a name and an introduction of no more than 500 words.');
   }
-  return { profile: { name, location }, bio, photos: validPhotos(value.photos) };
+  return { profile: { name, location }, bio, website, socialLinks: cleanedLinks, photos: validPhotos(value.photos) };
 }
 
 function assertActive(transaction, uid) {
@@ -104,7 +125,7 @@ export const saveProfile = onCall(options, async request => {
   const old = previous.data();
   const oldPhotos = old?.photos || (old?.photoDataUrl ? [old.photoDataUrl] : []);
   const newPhotos = data.photos;
-  await checkText(`${data.profile.name}\n${data.profile.location}\n${data.bio}`);
+  await checkText(`${data.profile.name}\n${data.profile.location}\n${data.bio}\n${data.website}\n${data.socialLinks.join('\n')}`);
   if (newPhotos.length) await checkPhotos(newPhotos);
   const now = Timestamp.now();
   await db.runTransaction(async transaction => {
@@ -345,4 +366,91 @@ export const saveSkills = onCall({ ...options, timeoutSeconds: 120 }, async requ
     }, { merge: true });
   });
   return { saved: true };
+});
+
+function cleanHomesteadPage(value) {
+  const name = typeof value?.name === 'string' ? value.name.trim() : '';
+  const description = typeof value?.description === 'string' ? value.description.trim() : '';
+  const fields = value?.fields;
+  if (!name || name.length > 100 || !description || description.length > 30000 ||
+      description.split(/\s+/).length > 2000 || !Array.isArray(fields) || fields.length > 40) {
+    invalid('Add a homestead name and description of no more than 2,000 words.');
+  }
+  const labels = new Set();
+  const cleanedFields = fields.map(field => {
+    const label = typeof field?.label === 'string' ? field.label.trim().replace(/\s+/g, ' ') : '';
+    const detail = typeof field?.value === 'string' ? field.value.trim() : '';
+    if (label.length < 2 || label.length > 80 || detail.length > 500 || labels.has(label.toLowerCase())) {
+      invalid('Use unique topic names and keep each detail under 500 characters.');
+    }
+    labels.add(label.toLowerCase());
+    return { label, value: detail };
+  });
+  return { name, description, fields: cleanedFields };
+}
+
+async function assertAdmin(uid) {
+  const [blocked, admin] = await Promise.all([
+    db.doc(`blockedUsers/${uid}`).get(), db.doc(`admins/${uid}`).get()
+  ]);
+  if (blocked.exists || !admin.exists) throw new HttpsError('permission-denied', 'Admin access required.');
+}
+
+export const saveHomesteadPage = onCall({ ...options, timeoutSeconds: 120 }, async request => {
+  const user = caller(request);
+  await assertAdmin(user.uid);
+  const page = cleanHomesteadPage(request.data);
+  const text = [page.name, page.description, ...page.fields.flatMap(field => [field.label, field.value])].join('\n');
+  for (let index = 0; index < text.length; index += 5000) await checkText(text.slice(index, index + 5000));
+  await db.runTransaction(async transaction => {
+    await assertActive(transaction, user.uid);
+    if (!(await transaction.get(db.doc(`admins/${user.uid}`))).exists) throw new HttpsError('permission-denied', 'Admin access required.');
+    transaction.set(db.doc('homesteadPage/main'), {
+      ...page, published: true, updatedBy: user.uid, updatedAt: FieldValue.serverTimestamp()
+    }, { merge: true });
+  });
+  return { saved: true };
+});
+
+export const addHomesteadPhoto = onCall({ ...options, timeoutSeconds: 120 }, async request => {
+  const user = caller(request);
+  await assertAdmin(user.uid);
+  const photo = request.data?.photo;
+  if (typeof photo !== 'string' || photo.length > 200000 || !photoPattern.test(photo)) {
+    invalid('Choose a JPG photo under 200 KB.');
+  }
+  await checkPhotos([photo]);
+  const pageRef = db.doc('homesteadPage/main');
+  const photoRef = db.collection('homesteadPhotos').doc();
+  await db.runTransaction(async transaction => {
+    await assertActive(transaction, user.uid);
+    const [admin, page] = await Promise.all([
+      transaction.get(db.doc(`admins/${user.uid}`)), transaction.get(pageRef)
+    ]);
+    if (!admin.exists) throw new HttpsError('permission-denied', 'Admin access required.');
+    const count = page.data()?.photoCount || 0;
+    if (count >= 20) throw new HttpsError('failed-precondition', 'The homestead page already has 20 photos.');
+    transaction.create(photoRef, { photo, addedBy: user.uid, addedAt: FieldValue.serverTimestamp() });
+    transaction.set(pageRef, { photoCount: count + 1 }, { merge: true });
+  });
+  return { id: photoRef.id };
+});
+
+export const deleteHomesteadPhoto = onCall(options, async request => {
+  const user = caller(request);
+  const id = request.data?.id;
+  if (typeof id !== 'string' || !/^[A-Za-z0-9]{20}$/.test(id)) invalid('Choose a homestead photo to remove.');
+  const pageRef = db.doc('homesteadPage/main');
+  const photoRef = db.doc(`homesteadPhotos/${id}`);
+  await db.runTransaction(async transaction => {
+    await assertActive(transaction, user.uid);
+    const [admin, page, photo] = await Promise.all([
+      transaction.get(db.doc(`admins/${user.uid}`)), transaction.get(pageRef), transaction.get(photoRef)
+    ]);
+    if (!admin.exists) throw new HttpsError('permission-denied', 'Admin access required.');
+    if (!photo.exists) throw new HttpsError('not-found', 'Photo not found.');
+    transaction.delete(photoRef);
+    transaction.set(pageRef, { photoCount: Math.max(0, (page.data()?.photoCount || 1) - 1) }, { merge: true });
+  });
+  return { deleted: true };
 });

@@ -4,6 +4,7 @@ import { getFirestore, doc, collection, getDoc, onSnapshot, query, orderBy } fro
 import { initializeAppCheck, ReCaptchaEnterpriseProvider } from 'https://www.gstatic.com/firebasejs/13.1.0/firebase-app-check.js';
 import { getFunctions, httpsCallable } from 'https://www.gstatic.com/firebasejs/13.1.0/firebase-functions.js';
 import { firebaseConfig, appCheckSiteKey } from './firebase-config.js';
+import { normalizeExternalUrl } from './links.js';
 
 const $ = id => document.getElementById(id);
 const configured = firebaseConfig.apiKey && firebaseConfig.apiKey !== 'REPLACE_ME' && firebaseConfig.projectId !== 'REPLACE_ME' && firebaseConfig.appId !== 'REPLACE_ME' && appCheckSiteKey && appCheckSiteKey !== 'REPLACE_ME';
@@ -188,6 +189,10 @@ function start() {
         $('profile-name').value = profile?.profile?.name || '';
         $('profile-location').value = profile?.profile?.location || '';
         $('profile-bio').value = profile?.bio || '';
+        $('profile-website').value = profile?.website || '';
+        for (let index = 1; index <= 3; index++) {
+          $(`profile-social-${index}`).value = profile?.socialLinks?.[index - 1] || '';
+        }
         updateWordCount();
         profileInitialized = true;
       }
@@ -221,11 +226,19 @@ function start() {
     const name = $('profile-name').value.trim();
     const location = $('profile-location').value.trim();
     const bio = $('profile-bio').value.trim();
+    let website;
+    let socialLinks;
+    try {
+      website = normalizeExternalUrl($('profile-website').value);
+      socialLinks = [1, 2, 3].map(index => normalizeExternalUrl($(`profile-social-${index}`).value)).filter(Boolean);
+    } catch (error) {
+      return status('profile-message', error.message, true);
+    }
     if (!name || !bio) return status('profile-message', 'Add a name and introduction.', true);
     if (updateWordCount() > 500) return status('profile-message', 'Keep your introduction within 500 words.', true);
     const button = $('save-profile');
     button.disabled = true;
-    const data = { profile: { name, location }, bio, photos: pendingPhotos === null ? savedPhotos() : pendingPhotos };
+    const data = { profile: { name, location }, bio, website, socialLinks, photos: pendingPhotos === null ? savedPhotos() : pendingPhotos };
     try {
       await saveProfileCall(data);
       pendingPhotos = null;

@@ -57,3 +57,20 @@
 .rank-row{display:grid;gap:5px;padding:13px;border:1px solid #dce5d9;border-radius:9px;background:#f8fbf6;color:#203529;text-align:left}
 .rank-row:hover{background:#eaf3e8;border-color:#9bb89b}
 .rank-row span{font-size:.78rem;color:#627567;overflow-wrap:anywhere}
+.profile-links{display:grid;gap:8px;margin:20px 0;overflow-wrap:anywhere}
+.profile-links a{color:#246341;text-decoration:underline;text-underline-offset:3px}
+#profile-social-2,#profile-social-3{margin-top:8px}
+.homestead-page{max-width:1080px}
+.homestead-section{margin-bottom:22px}
+.homestead-description{white-space:pre-wrap;overflow-wrap:anywhere;margin-top:18px}
+.homestead-details{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px;margin-top:20px}
+.homestead-detail{display:grid;gap:7px;border:1px solid #e0e8dc;border-radius:10px;padding:15px;background:#f8fbf6;overflow-wrap:anywhere}
+.homestead-detail strong{color:#234837}
+.homestead-gallery{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px;margin-top:20px}
+.homestead-photo{margin:0;display:grid;gap:8px;align-content:start}
+.homestead-photo img{width:100%;height:230px;object-fit:contain;border:1px solid #dce5d9;border-radius:10px;background:#f2f4ed}
+.homestead-photo button{justify-self:start}
+.topic-edit-row{display:grid;grid-template-columns:minmax(150px,1fr) minmax(220px,2fr) auto;gap:10px;align-items:start;padding:13px 0;border-bottom:1px solid #e5ebe2}
+.topic-edit-row button{margin-top:10px}
+.homestead-photo-editor{border-top:1px solid #e5ebe2;margin-top:30px;padding-top:24px}
+@media(max-width:700px){.topic-edit-row{grid-template-columns:1fr}.topic-edit-row button{justify-self:start;margin-top:0}}

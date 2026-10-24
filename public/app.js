@@ -256,7 +256,7 @@ function start() {
     $('interview-time').textContent = `Scheduled for ${scheduled}${timeZoneLabel ? ` ${timeZoneLabel}` : ''}. Your local time: ${date.toLocaleString()}.`;
     $('interview-admin').textContent = `Your contact: ${interview.source === 'calendar' ? (interview.contactAdminEmail || 'a Homesteader admin') : 'a Homesteader admin'}`;
     $('interview-help').textContent = interview.source === 'calendar' ?
-      'Your time is booked. Check your email for the Google Calendar invitation, or reply in your private inbox with questions.' :
+      'Your time is booked in Homesteader. Reply in your private inbox if you have questions.' :
       'Reply in your private inbox to confirm the date and time or ask the admin questions.';
     $('interview-note').textContent = interview.note || '';
     $('interview-note').hidden = !interview.note;
@@ -322,7 +322,7 @@ function start() {
     status('booking-message', 'Booking your interview...');
     try {
       await bookInterviewSlotCall({ start });
-      status('booking-message', 'Interview booked. Google Calendar has emailed your invitation.');
+      status('booking-message', 'Interview booked. You can see it on your profile and in your private inbox.');
       $('booking-slots').replaceChildren();
     } catch (error) {
       status('booking-message', readableError(error), true);

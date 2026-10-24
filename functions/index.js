@@ -5,7 +5,7 @@ import { getFirestore, FieldValue, Timestamp } from 'firebase-admin/firestore';
 import vision from '@google-cloud/vision';
 import language from '@google-cloud/language';
 import { createHash } from 'node:crypto';
-import { createCalendarBooking } from './calendar-booking.js';
+import { createCalendarBooking, bookingLockRefs } from './calendar-booking.js';
 
 initializeApp();
 const db = getFirestore();
@@ -334,7 +334,7 @@ export const manageApplicant = onCall(options, async request => {
     ]);
     if (!admin.exists || targetAdmin.exists) throw new HttpsError('permission-denied', 'Admin access required.');
     if (action === 'delete' && profile.data()?.interview?.source === 'calendar') {
-      throw new HttpsError('failed-precondition', 'Cancel the calendar interview before deleting this applicant.');
+      throw new HttpsError('failed-precondition', 'Cancel the booked interview before deleting this applicant.');
     }
     const nextCount = action === 'delete' && profile.exists ?
       Math.max(0, (await applicantProfileCount(transaction, stats)) - 1) : null;
@@ -470,6 +470,9 @@ export const manageInterview = onCall(options, async request => {
   await assertAdmin(user.uid);
   let interview = null;
   let invitation = '';
+  let reservationRefs = [];
+  let reservationEndMs = 0;
+  let reservationBufferMs = 0;
   if (action === 'schedule') {
     const mode = request.data?.mode;
     const modeLabel = new Map([['phone', 'phone'], ['in-person', 'in-person'], ['zoom', 'Zoom']]).get(mode);
@@ -494,8 +497,13 @@ export const manageInterview = onCall(options, async request => {
       invalid('Choose a valid time zone.');
     }
     if (note) await checkText(note);
+    const availability = (await db.doc(`adminAvailability/${user.uid}`).get()).data()?.availability;
+    reservationBufferMs = (availability?.bufferMinutes || 0) * 60_000;
+    reservationEndMs = date.getTime() + 60 * 60_000;
+    reservationRefs = bookingLockRefs(db, user.uid, date.getTime(), reservationEndMs + reservationBufferMs);
     interview = {
-      mode, scheduledAt: Timestamp.fromDate(date), timeZone, timeZoneLabel, note, meetingLink,
+      source: 'manual', mode, scheduledAt: Timestamp.fromDate(date), durationMinutes: 60,
+      timeZone, timeZoneLabel, note, meetingLink, bookingLockIds: reservationRefs.map(ref => ref.id),
       contactAdminUid: user.uid, updatedAt: FieldValue.serverTimestamp()
     };
     invitation = `You are invited to a ${modeLabel} interview on ${formatted} ${timeZoneLabel}. ` +
@@ -512,12 +520,37 @@ export const manageInterview = onCall(options, async request => {
     if (!admin.exists) throw new HttpsError('permission-denied', 'Admin access required.');
     if (blocked.exists || !applicant.exists) throw new HttpsError('failed-precondition', 'This applicant is unavailable.');
     if (applicant.data().interview?.source === 'calendar') {
-      throw new HttpsError('failed-precondition', 'Cancel the calendar interview before changing it.');
+      throw new HttpsError('failed-precondition', 'Cancel the booked interview before changing it.');
     }
     if (action === 'cancel' && !applicant.data().interview) throw new HttpsError('failed-precondition', 'No interview is scheduled.');
     const conversation = db.doc(`conversations/${uid}`);
     const existing = await transaction.get(conversation);
+    const previousRefs = (applicant.data().interview?.bookingLockIds || [])
+      .map(id => db.doc(`calendarSlotLocks/${id}`));
+    const allRefs = [...new Map([...previousRefs, ...reservationRefs].map(ref => [ref.path, ref])).values()];
+    const locks = await Promise.all(allRefs.map(ref => transaction.get(ref)));
+    if (action === 'schedule') {
+      const otherInterviews = await transaction.get(db.collection('users')
+        .where('interview.contactAdminUid', '==', user.uid).select('interview'));
+      const startMs = interview.scheduledAt.toMillis();
+      if (otherInterviews.docs.some(doc => {
+        if (doc.id === uid) return false;
+        const other = doc.data().interview;
+        const otherStart = other?.scheduledAt?.toMillis?.();
+        const otherEnd = otherStart + (other?.durationMinutes || 60) * 60_000;
+        return otherStart < reservationEndMs + reservationBufferMs && otherEnd > startMs - reservationBufferMs;
+      })) throw new HttpsError('failed-precondition', 'Another interview overlaps that time.');
+      if (reservationRefs.some(ref => {
+        const lock = locks[allRefs.findIndex(item => item.path === ref.path)];
+        return lock.exists && lock.data().expiresAt?.toMillis?.() > Date.now() &&
+          lock.data().applicantUid !== uid;
+      })) throw new HttpsError('failed-precondition', 'That time is already booked or blocked.');
+    }
     const message = conversation.collection('messages').doc();
+    previousRefs.forEach(ref => {
+      const lock = locks[allRefs.findIndex(item => item.path === ref.path)];
+      if (!reservationRefs.some(item => item.path === ref.path) && lock.data()?.applicantUid === uid) transaction.delete(ref);
+    });
     if (action === 'cancel') {
       const previous = applicant.data().interview;
       const label = ({ phone: 'phone', 'in-person': 'in-person', zoom: 'Zoom' })[previous.mode] || 'scheduled';
@@ -531,6 +564,10 @@ export const manageInterview = onCall(options, async request => {
       transaction.set(db.doc(`applicantSummaries/${uid}`), {
         interviewMode: interview.mode, interviewAt: interview.scheduledAt
       }, { merge: true });
+      reservationRefs.forEach(ref => transaction.set(ref, {
+        adminUid: user.uid, applicantUid: uid,
+        expiresAt: Timestamp.fromMillis(reservationEndMs + reservationBufferMs)
+      }));
     }
     if (!existing.exists) transaction.create(conversation, {
       participantUid: uid, openedBy: user.uid, openedAt: FieldValue.serverTimestamp(),
@@ -719,7 +756,7 @@ export const deleteHomesteadPhoto = onCall(options, async request => {
 });
 
 export const {
-  calendarStatus, saveCalendarIntegration, beginCalendarConnect, calendarOAuthCallback,
-  disconnectCalendar, saveCalendarAvailability, inviteToBook, revokeBookingInvite,
+  calendarStatus, saveCalendarAvailability, addCalendarBlock, removeCalendarBlock,
+  inviteToBook, revokeBookingInvite,
   listInterviewSlots, bookInterviewSlot, cancelCalendarInterview
-} = createCalendarBooking({ db, caller, assertAdmin, assertMasterAdmin, checkText, options });
+} = createCalendarBooking({ db, caller, assertAdmin, checkText, options });

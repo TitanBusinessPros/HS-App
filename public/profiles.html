@@ -26,24 +26,11 @@
       <div class="page-intro"><span class="eyebrow">Admin workspace</span><h1>Applicant profiles</h1><p>Profiles are listed alphabetically. Select a person to load their full introduction, photos, skills, questionnaire, and private conversation.</p><a class="text-button" href="./">Back to admin home</a></div>
       <p id="page-message" class="message" role="status"></p>
       <section id="calendar-settings" class="card skill-ranking-card">
-        <h2>Google Calendar interviews</h2>
-        <p class="muted">Connect your calendar, set the hours applicants can book, then invite someone from their profile below.</p>
-        <div id="calendar-master-setup" class="calendar-master-setup" hidden>
-          <h3>Google connection setup</h3>
-          <p class="field-help">Master admin only. Create a Google OAuth Web application and enter its client credentials here. These values stay in private server records.</p>
-          <p class="field-help">Authorized redirect URI: <code id="calendar-redirect-uri"></code></p>
-          <form id="calendar-config-form">
-            <label for="calendar-client-id">OAuth client ID</label><input id="calendar-client-id" autocomplete="off" required>
-            <label for="calendar-client-secret">OAuth client secret</label><input id="calendar-client-secret" type="password" autocomplete="new-password" required>
-            <p class="field-help">Changing these credentials requires every admin to reconnect their calendar.</p>
-            <button class="secondary-button" type="submit">Save Google connection setup</button>
-            <p id="calendar-config-message" class="message" role="status"></p>
-          </form>
-        </div>
-        <p id="calendar-connection-status" class="muted">Checking calendar connection...</p>
-        <div class="calendar-actions"><button id="connect-calendar" class="primary-button" type="button">Connect my Google Calendar</button><button id="disconnect-calendar" class="text-button" type="button" hidden>Disconnect calendar</button></div>
+        <h2>My interview calendar</h2>
+        <p class="muted">Set the hours applicants can book with you, block times when you are unavailable, and invite an applicant from their profile below. This calendar stays inside Homesteader.</p>
+        <p id="calendar-connection-status" class="muted">Loading your interview calendar...</p>
         <p id="calendar-status-message" class="message" role="status"></p>
-        <form id="calendar-availability-form" hidden>
+        <form id="calendar-availability-form">
           <h3>Bookable hours</h3>
           <div class="calendar-days" role="group" aria-label="Bookable days">
             <label><input type="checkbox" name="calendar-day" value="0"> Sunday</label>
@@ -55,8 +42,8 @@
             <label><input type="checkbox" name="calendar-day" value="6"> Saturday</label>
           </div>
           <div class="calendar-form-grid">
-            <div><label for="calendar-start">Start time</label><input id="calendar-start" type="time" required></div>
-            <div><label for="calendar-end">End time</label><input id="calendar-end" type="time" required></div>
+            <div><label for="calendar-start">Start time</label><input id="calendar-start" type="time" step="900" required></div>
+            <div><label for="calendar-end">End time</label><input id="calendar-end" type="time" step="900" required></div>
             <div><label for="calendar-duration">Interview length</label><select id="calendar-duration"><option value="30">30 minutes</option><option value="45">45 minutes</option><option value="60">60 minutes</option></select></div>
             <div><label for="calendar-buffer">Buffer between interviews</label><select id="calendar-buffer"><option value="0">None</option><option value="15">15 minutes</option><option value="30">30 minutes</option></select></div>
             <div><label for="calendar-lead">Minimum notice</label><select id="calendar-lead"><option value="1">1 hour</option><option value="12">12 hours</option><option value="24">24 hours</option><option value="48">48 hours</option></select></div>
@@ -64,10 +51,29 @@
             <div><label for="calendar-time-zone">Calendar time zone</label><input id="calendar-time-zone" required placeholder="America/Chicago"></div>
             <div><label for="calendar-zone-label">Time zone shown to applicants</label><input id="calendar-zone-label" required maxlength="60" placeholder="Central Time (CT)"></div>
           </div>
-          <p class="field-help">Busy events on your Google Calendar will be removed from these hours. Applicants see available times only.</p>
+          <p class="field-help">Scheduled Homesteader interviews and times you block below are removed from applicants' choices. Events outside Homesteader are not checked.</p>
           <button class="primary-button" type="submit">Save bookable hours</button>
           <p id="calendar-availability-message" class="message" role="status"></p>
         </form>
+        <div class="calendar-agenda">
+          <div>
+            <h3>Block a time</h3>
+            <p class="field-help">Use your device's local time. The block can be up to eight hours long.</p>
+            <form id="calendar-block-form">
+              <div class="calendar-form-grid">
+                <div><label for="calendar-block-start">Start</label><input id="calendar-block-start" type="datetime-local" step="900" required></div>
+                <div><label for="calendar-block-end">End</label><input id="calendar-block-end" type="datetime-local" step="900" required></div>
+              </div>
+              <button class="secondary-button" type="submit">Block time</button>
+              <p id="calendar-block-message" class="message" role="status"></p>
+            </form>
+            <div id="calendar-block-list" class="calendar-agenda-list"></div>
+          </div>
+          <div>
+            <h3>Upcoming interviews</h3>
+            <div id="calendar-booking-list" class="calendar-agenda-list"></div>
+          </div>
+        </div>
       </section>
       <section id="admin-management" class="card skill-ranking-card" hidden>
         <h2>Manage admins</h2>
@@ -131,7 +137,7 @@
               <h3>Interview invitation</h3><p id="current-interview" class="muted">No interview scheduled.</p>
               <div class="booking-invite-form">
                 <h4>Let this applicant choose a time</h4>
-                <p id="booking-invite-summary" class="field-help">Connect your calendar and save bookable hours above first.</p>
+                <p id="booking-invite-summary" class="field-help">Save your bookable hours above first.</p>
                 <label for="booking-invite-mode">Interview type</label><select id="booking-invite-mode"><option value="phone">Phone</option><option value="in-person">In-person</option><option value="zoom">Zoom</option></select>
                 <div id="booking-invite-link-row" hidden><label for="booking-invite-link">Zoom meeting link <span class="optional">optional</span></label><input id="booking-invite-link" type="url" placeholder="https://zoom.us/..."></div>
                 <label for="booking-invite-note">Message to applicant <span class="optional">optional</span></label><textarea id="booking-invite-note" rows="2" maxlength="1000"></textarea>

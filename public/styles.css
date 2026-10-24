@@ -139,9 +139,8 @@ main{width:100%;flex:1}
 @media(max-width:900px){.site-header{grid-template-columns:1fr;justify-items:center;padding:12px 15px;gap:8px}.site-header .brand,.site-header .header-actions,.site-header > .text-button{grid-column:1;justify-self:center}.header-actions{flex-wrap:wrap;justify-content:center}}
 @media(max-width:620px){.footer-contact{grid-template-columns:1fr}.footer-contact > *{grid-column:1}.footer-divider{display:none}}
 @media(max-width:520px){.site-footer{padding:32px 15px 22px}.footer-links{gap:14px 20px}}
-.calendar-master-setup,.booking-invite-form{border-top:1px solid #e2e9df;margin-top:22px;padding-top:20px}
-.calendar-master-setup h3,.booking-invite-form h4,#calendar-availability-form h3{text-align:center;font-family:Fraunces,Georgia,serif;font-size:1.25rem;margin:0 0 10px}
-.calendar-master-setup code{overflow-wrap:anywhere}
+.booking-invite-form{border-top:1px solid #e2e9df;margin-top:22px;padding-top:20px}
+.booking-invite-form h4,#calendar-availability-form h3,.calendar-agenda h3{text-align:center;font-family:Fraunces,Georgia,serif;font-size:1.25rem;margin:0 0 10px}
 .calendar-actions{display:flex;flex-wrap:wrap;align-items:center;justify-content:center;gap:10px;margin-top:12px}
 .calendar-actions .primary-button{margin-top:0}
 .calendar-days{display:flex;flex-wrap:wrap;justify-content:center;gap:9px;margin:15px 0}
@@ -149,7 +148,13 @@ main{width:100%;flex:1}
 .calendar-days input{width:auto;margin:0;accent-color:#234837}
 .calendar-form-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0 18px}
 #calendar-availability-form{border-top:1px solid #e2e9df;margin-top:22px;padding-top:20px}
+.calendar-agenda{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:24px;border-top:1px solid #e2e9df;margin-top:22px;padding-top:22px}
+.calendar-agenda-list{display:grid;gap:9px;margin-top:14px;max-height:340px;overflow:auto}
+.calendar-agenda-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:11px 13px;border:1px solid #d6e1d2;border-radius:9px;background:#fbfdf9;color:#203b2c;text-align:left}
+.calendar-agenda-row .text-button{white-space:nowrap}
+.calendar-agenda-link{width:100%;font:inherit;cursor:pointer}
+.calendar-agenda-link:hover{background:#eef5eb}
 .booking-invite-form{margin-bottom:24px}
 .booking-slots{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:10px;margin-top:20px;max-height:430px;overflow:auto;padding:2px}
 .booking-slot{width:100%;margin:0;text-align:center;white-space:normal}
-@media(max-width:620px){.calendar-form-grid{grid-template-columns:1fr}}
+@media(max-width:620px){.calendar-form-grid,.calendar-agenda{grid-template-columns:1fr}}

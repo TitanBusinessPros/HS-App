@@ -29,6 +29,14 @@ service cloud.firestore {
       allow list: if isAdmin();
       allow write: if false;
     }
+    match /applicantSummaries/{uid} {
+      allow get, list: if isAdmin();
+      allow write: if false;
+    }
+    match /questionnaires/{uid} {
+      allow get: if owns(uid) || isAdmin();
+      allow list, write: if false;
+    }
     match /conversations/{uid} {
       allow get: if owns(uid) || isAdmin();
       allow list: if isAdmin();

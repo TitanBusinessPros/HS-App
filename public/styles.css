@@ -16,3 +16,26 @@
 .danger-button:hover{background:#8e3026}
 .blocked-heading{font-size:1.1rem;margin:30px 0 8px}
 .blocked-row{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px 2px;border-bottom:1px solid #edf0e9;font-size:.82rem;overflow-wrap:anywhere}
+.button-link{display:inline-block;text-decoration:none}
+.questionnaire-link{margin-top:30px;padding-top:24px;border-top:1px solid #e4e9e0}
+.questionnaire-link h2{margin-bottom:8px}
+.questionnaire-link .field-help{margin-top:14px}
+.questionnaire-page{max-width:850px;margin:0 auto}
+.questionnaire-card{padding:clamp(20px,4vw,38px)}
+.questionnaire-card>.field-count{text-align:left;margin-bottom:25px}
+.question-section{margin:38px 0 16px;padding-top:18px;border-top:1px solid #e3e9df}
+.question-section:first-child{margin-top:0;border-top:0;padding-top:0}
+.question{border:0;border-bottom:1px solid #edf0e9;padding:12px 0 24px;margin:0 0 12px;min-width:0}
+.question legend{font-weight:700;padding:0;margin-bottom:12px;line-height:1.45}
+.choice{display:flex;align-items:flex-start;gap:10px;margin:7px 0;padding:8px 10px;border-radius:8px;font-weight:400;cursor:pointer}
+.choice:hover{background:#f2f6ef}
+.choice input[type=radio]{width:auto;flex:none;margin:3px 0 0;padding:0;box-shadow:none;accent-color:#234837}
+.pagination{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:12px;font-size:.78rem;color:#627567}
+.pagination button{font-size:.78rem}
+.pagination button:disabled{opacity:.4;cursor:default}
+.blocked-section{margin-top:25px;padding-top:15px;border-top:1px solid #e4e9e0}
+.blocked-section summary,.questionnaire-results summary{cursor:pointer;font-weight:700;color:#234837}
+.questionnaire-results{margin:27px 0;padding:18px;border:1px solid #dce5d9;border-radius:10px;background:#f8fbf6}
+.questionnaire-answer{display:grid;gap:5px;padding:11px 0;border-bottom:1px solid #e2e9df;font-size:.85rem}
+.questionnaire-answer:last-child{border-bottom:0}
+.questionnaire-answer span{color:#526b57}

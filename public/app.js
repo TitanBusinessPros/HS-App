@@ -21,23 +21,15 @@ function start() {
   const functions = getFunctions(app, 'us-west2');
   const saveProfileCall = httpsCallable(functions, 'saveProfile');
   const sendMessageCall = httpsCallable(functions, 'sendMessage');
-  const setReviewStatusCall = httpsCallable(functions, 'setReviewStatus');
-  const manageApplicantCall = httpsCallable(functions, 'manageApplicant');
   let currentUser = null;
   let currentProfile = null;
   let isAdmin = false;
   let pendingPhotos = null;
   let profileInitialized = false;
-  let applicants = [];
-  let blocked = new Map();
-  let selectedUid = null;
   let memberMessagesUnsub = null;
   let memberConversationUnsub = null;
-  let adminMessagesUnsub = null;
-  let adminConversationUnsub = null;
   let profileUnsub = null;
-  let applicantsUnsub = null;
-  let blockedUnsub = null;
+  let questionnaireUnsub = null;
   let authGeneration = 0;
   const photoPreview = document.createElement('img');
   photoPreview.className = 'photo-hover-preview';
@@ -84,8 +76,8 @@ function start() {
     for (const view of ['auth-view', 'member-view', 'admin-view']) $(view).hidden = view !== id;
   }
   function cleanSubscriptions() {
-    for (const unsub of [memberMessagesUnsub, memberConversationUnsub, adminMessagesUnsub, adminConversationUnsub, profileUnsub, applicantsUnsub, blockedUnsub]) if (unsub) unsub();
-    memberMessagesUnsub = memberConversationUnsub = adminMessagesUnsub = adminConversationUnsub = profileUnsub = applicantsUnsub = blockedUnsub = null;
+    for (const unsub of [memberMessagesUnsub, memberConversationUnsub, profileUnsub, questionnaireUnsub]) if (unsub) unsub();
+    memberMessagesUnsub = memberConversationUnsub = profileUnsub = questionnaireUnsub = null;
   }
   $('google-sign-in').addEventListener('click', async () => {
     const button = $('google-sign-in');
@@ -108,9 +100,6 @@ function start() {
     currentProfile = null;
     profileInitialized = false;
     pendingPhotos = null;
-    applicants = [];
-    blocked = new Map();
-    selectedUid = null;
     $('sign-out').hidden = !user;
     $('account-email').hidden = !user;
     $('account-email').textContent = user?.email || '';
@@ -131,11 +120,12 @@ function start() {
       if (generation !== authGeneration) return;
       if (isAdmin) {
         showView('admin-view');
-        watchApplicants();
-        watchBlocked();
       } else {
         showView('member-view');
         watchProfile(user.uid);
+        questionnaireUnsub = onSnapshot(doc(db, 'questionnaires', user.uid), snapshot => {
+          $('questionnaire-status').textContent = snapshot.exists() ? 'Completed. You can update your answers.' : 'Not completed yet.';
+        }, error => status('profile-message', readableError(error), true));
         watchMemberConversation(user.uid);
       }
     } catch (error) {
@@ -265,177 +255,6 @@ function start() {
       status('member-message-status', 'Reply sent.');
     } catch (error) {
       status('member-message-status', readableError(error), true);
-    } finally {
-      button.disabled = false;
-    }
-  });
-
-  function watchApplicants() {
-    applicantsUnsub = onSnapshot(collection(db, 'users'), snapshot => {
-      applicants = snapshot.docs.map(item => ({ uid: item.id, ...item.data() })).sort((a, b) => (a.profile?.name || '').localeCompare(b.profile?.name || ''));
-      $('applicant-count').textContent = String(applicants.length);
-      renderApplicantList();
-      if (selectedUid) {
-        const selected = applicants.find(person => person.uid === selectedUid);
-        if (selected) renderApplicantDetail(selected);
-        else {
-          selectedUid = null;
-          $('admin-detail').hidden = true;
-          $('admin-detail-empty').hidden = false;
-        }
-      }
-    }, error => {
-      $('applicant-empty').hidden = false;
-      $('applicant-empty').textContent = readableError(error);
-    });
-  }
-  function watchBlocked() {
-    blockedUnsub = onSnapshot(collection(db, 'blockedUsers'), snapshot => {
-      blocked = new Map(snapshot.docs.map(item => [item.id, item.data()]));
-      renderApplicantList();
-      renderBlockedList();
-      const selected = applicants.find(person => person.uid === selectedUid);
-      if (selected) renderApplicantDetail(selected);
-    }, error => status('account-action-message', readableError(error), true));
-  }
-  function renderBlockedList() {
-    const list = $('blocked-list');
-    list.replaceChildren();
-    for (const [uid, info] of blocked) {
-      const row = document.createElement('div');
-      row.className = 'blocked-row';
-      const label = document.createElement('span');
-      label.textContent = info.email || uid;
-      const button = document.createElement('button');
-      button.type = 'button';
-      button.className = 'text-button';
-      button.textContent = 'Unblock';
-      button.addEventListener('click', async () => {
-        button.disabled = true;
-        try { await manageApplicantCall({ uid, action: 'unblock' }); }
-        catch (error) { status('account-action-message', readableError(error), true); }
-        finally { button.disabled = false; }
-      });
-      row.append(label, button);
-      list.append(row);
-    }
-  }
-  function renderApplicantList() {
-    const term = $('applicant-search').value.trim().toLowerCase();
-    const shown = applicants.filter(person => [person.profile?.name, person.profile?.location, person.email].some(value => (value || '').toLowerCase().includes(term)));
-    $('applicant-empty').hidden = shown.length > 0;
-    $('applicant-empty').textContent = applicants.length ? 'No matching profiles.' : 'No profiles submitted yet.';
-    const list = $('applicant-list');
-    list.replaceChildren();
-    for (const person of shown) {
-      const button = document.createElement('button');
-      button.type = 'button';
-      button.className = `applicant-row ${person.uid === selectedUid ? 'selected' : ''}`;
-      const name = document.createElement('strong');
-      name.textContent = person.profile?.name || 'Unnamed';
-      const meta = document.createElement('span');
-      meta.textContent = `${person.email || ''} · ${blocked.has(person.uid) ? 'Blocked' : statusLabel(person.status)}`;
-      button.append(name, meta);
-      button.addEventListener('click', () => selectApplicant(person.uid));
-      list.append(button);
-    }
-  }
-  function selectApplicant(uid) {
-    if (selectedUid !== uid) {
-      if (adminMessagesUnsub) adminMessagesUnsub();
-      if (adminConversationUnsub) adminConversationUnsub();
-      adminMessagesUnsub = adminConversationUnsub = null;
-      selectedUid = uid;
-      $('admin-messages').replaceChildren();
-      watchAdminConversation(uid);
-    }
-    renderApplicantList();
-    const person = applicants.find(item => item.uid === uid);
-    if (person) renderApplicantDetail(person);
-  }
-  function renderApplicantDetail(person) {
-    $('admin-detail-empty').hidden = true;
-    $('admin-detail').hidden = false;
-    $('detail-name').textContent = person.profile?.name || 'Unnamed';
-    $('detail-status').textContent = blocked.has(person.uid) ? 'Blocked' : statusLabel(person.status);
-    $('detail-email').textContent = person.email || '';
-    $('detail-location').textContent = person.profile?.location ? `Location: ${person.profile.location}` : 'Location not provided';
-    $('detail-bio').textContent = person.bio || 'No introduction yet.';
-    const photos = person.photos || (person.photoDataUrl ? [person.photoDataUrl] : []);
-    hidePhotoPreview();
-    $('detail-photos').replaceChildren();
-    for (const [index, src] of photos.entries()) {
-      const img = document.createElement('img');
-      img.src = src;
-      img.alt = `Applicant photo ${index + 1}`;
-      img.className = 'detail-photo';
-      attachPhotoPreview(img);
-      $('detail-photos').append(img);
-    }
-    $('review-status').value = person.status || 'submitted';
-    $('block-applicant').textContent = blocked.has(person.uid) ? 'Unblock account' : 'Block account';
-    $('save-review').disabled = blocked.has(person.uid);
-    $('admin-send').disabled = blocked.has(person.uid);
-    status('review-message', '');
-  }
-  $('applicant-search').addEventListener('input', renderApplicantList);
-  $('save-review').addEventListener('click', async () => {
-    if (!selectedUid) return;
-    const button = $('save-review');
-    button.disabled = true;
-    try {
-      await setReviewStatusCall({ uid: selectedUid, status: $('review-status').value });
-      status('review-message', 'Review status saved.');
-    } catch (error) {
-      status('review-message', readableError(error), true);
-    } finally {
-      button.disabled = false;
-    }
-  });
-  $('block-applicant').addEventListener('click', async () => {
-    if (!selectedUid) return;
-    const uid = selectedUid;
-    const action = blocked.has(uid) ? 'unblock' : 'block';
-    const button = $('block-applicant');
-    button.disabled = true;
-    try {
-      await manageApplicantCall({ uid, action });
-      status('account-action-message', action === 'block' ? 'Account blocked.' : 'Account unblocked.');
-    } catch (error) { status('account-action-message', readableError(error), true); }
-    finally { button.disabled = false; }
-  });
-  $('delete-applicant').addEventListener('click', async () => {
-    if (!selectedUid || !confirm('Delete this profile and block the account from returning?')) return;
-    const button = $('delete-applicant');
-    button.disabled = true;
-    try {
-      await manageApplicantCall({ uid: selectedUid, action: 'delete' });
-      status('account-action-message', 'Profile deleted and account blocked.');
-    } catch (error) { status('account-action-message', readableError(error), true); }
-    finally { button.disabled = false; }
-  });
-  function watchAdminConversation(uid) {
-    adminConversationUnsub = onSnapshot(doc(db, 'conversations', uid), snapshot => {
-      const opened = snapshot.exists();
-      $('admin-chat-empty').hidden = opened;
-      if (opened && !adminMessagesUnsub) {
-        adminMessagesUnsub = onSnapshot(query(collection(db, 'conversations', uid, 'messages'), orderBy('createdAt', 'asc')), messages => renderMessages('admin-messages', messages, currentUser.uid), error => status('admin-message-status', readableError(error), true));
-      }
-    }, error => status('admin-message-status', readableError(error), true));
-  }
-  $('admin-message-form').addEventListener('submit', async event => {
-    event.preventDefault();
-    const uid = selectedUid;
-    const text = $('admin-message').value.trim();
-    if (!uid || !text || !currentUser) return;
-    const button = $('admin-send');
-    button.disabled = true;
-    try {
-      await sendMessageCall({ targetUid: uid, text });
-      $('admin-message').value = '';
-      status('admin-message-status', 'Message sent.');
-    } catch (error) {
-      status('admin-message-status', readableError(error), true);
     } finally {
       button.disabled = false;
     }

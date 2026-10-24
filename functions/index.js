@@ -8,8 +8,8 @@ import language from '@google-cloud/language';
 initializeApp();
 const db = getFirestore();
 const auth = getAuth();
-const visionClient = new vision.ImageAnnotatorClient();
-const languageClient = new language.v2.LanguageServiceClient();
+let visionClient;
+let languageClient;
 const options = { region: 'us-west2', enforceAppCheck: true, maxInstances: 10, memory: '512MiB' };
 const photoPattern = /^data:image\/jpeg;base64,([A-Za-z0-9+/]+={0,2})$/;
 const monthMs = 30 * 24 * 60 * 60 * 1000;
@@ -29,6 +29,7 @@ function invalid(message) {
 
 async function checkText(text) {
   try {
+    languageClient ??= new language.v2.LanguageServiceClient();
     const [result] = await languageClient.moderateText({ document: { content: text, type: 'PLAIN_TEXT' } });
     if (!result?.moderationCategories?.length) throw new Error('No moderation result');
     if (result.moderationCategories.some(category =>
@@ -47,6 +48,7 @@ async function checkPhotos(photos) {
   for (const photo of photos) {
     try {
       const [, base64] = photo.match(photoPattern);
+      visionClient ??= new vision.ImageAnnotatorClient();
       const [result] = await visionClient.safeSearchDetection({ image: { content: Buffer.from(base64, 'base64') } });
       const safe = result?.safeSearchAnnotation;
       const level = value => typeof value === 'number' ? value : ({ VERY_UNLIKELY: 1, UNLIKELY: 2, POSSIBLE: 3, LIKELY: 4, VERY_LIKELY: 5 })[value] ?? null;
@@ -123,6 +125,13 @@ export const saveProfile = onCall(options, async request => {
     };
     if (current.exists) transaction.update(account, { ...update, reviewedAt: FieldValue.delete(), photoDataUrl: FieldValue.delete() });
     else transaction.create(account, { ...update, createdAt: now });
+    transaction.set(db.doc(`applicantSummaries/${user.uid}`), {
+      name: data.profile.name,
+      location: data.profile.location,
+      email: user.token.email || '',
+      status: 'submitted',
+      updatedAt: now
+    }, { merge: true });
   });
   return { saved: true };
 });
@@ -161,8 +170,16 @@ export const setReviewStatus = onCall(options, async request => {
     await assertActive(transaction, user.uid);
     if (!(await transaction.get(db.doc(`admins/${user.uid}`))).exists) throw new HttpsError('permission-denied', 'Admin access required.');
     const applicant = db.doc(`users/${uid}`);
-    if (!(await transaction.get(applicant)).exists) throw new HttpsError('not-found', 'Profile not found.');
+    const profile = await transaction.get(applicant);
+    if (!profile.exists) throw new HttpsError('not-found', 'Profile not found.');
     transaction.update(applicant, { status, reviewedAt: FieldValue.serverTimestamp() });
+    transaction.set(db.doc(`applicantSummaries/${uid}`), {
+      name: profile.data().profile?.name || 'Unnamed',
+      location: profile.data().profile?.location || '',
+      email: profile.data().email || '',
+      status,
+      updatedAt: FieldValue.serverTimestamp()
+    }, { merge: true });
   });
   return { saved: true };
 });
@@ -182,7 +199,11 @@ export const manageApplicant = onCall(options, async request => {
     if (action === 'unblock') transaction.delete(blocked);
     else {
       transaction.set(blocked, { email: profile.data()?.email || '', blockedBy: user.uid, blockedAt: FieldValue.serverTimestamp() });
-      if (action === 'delete' && profile.exists) transaction.delete(profile.ref);
+      if (action === 'delete') {
+        if (profile.exists) transaction.delete(profile.ref);
+        transaction.delete(db.doc(`applicantSummaries/${uid}`));
+        transaction.delete(db.doc(`questionnaires/${uid}`));
+      }
     }
   });
   try {
@@ -195,4 +216,34 @@ export const manageApplicant = onCall(options, async request => {
     catch (error) { console.error('Conversation cleanup failed', error); }
   }
   return { done: true };
+});
+
+export const saveQuestionnaire = onCall(options, async request => {
+  const user = caller(request);
+  const answers = request.data?.answers;
+  if (!Array.isArray(answers) || answers.length !== 30 ||
+      answers.some(answer => !Number.isInteger(answer) || answer < 0 || answer > 3)) {
+    invalid('Answer all 30 questions before submitting.');
+  }
+  await db.runTransaction(async transaction => {
+    await assertActive(transaction, user.uid);
+    const [admin, profile] = await Promise.all([
+      transaction.get(db.doc(`admins/${user.uid}`)),
+      transaction.get(db.doc(`users/${user.uid}`))
+    ]);
+    if (admin.exists || !profile.exists) throw new HttpsError('failed-precondition', 'Save your applicant profile before taking the questionnaire.');
+    transaction.set(db.doc(`questionnaires/${user.uid}`), {
+      version: 1,
+      answers,
+      submittedAt: FieldValue.serverTimestamp()
+    });
+    transaction.set(db.doc(`applicantSummaries/${user.uid}`), {
+      name: profile.data().profile?.name || 'Unnamed',
+      location: profile.data().profile?.location || '',
+      email: profile.data().email || '',
+      status: profile.data().status || 'submitted',
+      questionnaireCompletedAt: FieldValue.serverTimestamp()
+    }, { merge: true });
+  });
+  return { saved: true };
 });

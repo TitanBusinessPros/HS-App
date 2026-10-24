@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#234837">
+  <meta name="robots" content="noindex,nofollow">
+  <title>Homesteader Questionnaire</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="site-header">
+    <a class="brand" href="./" aria-label="Homesteader home"><span class="brand-mark">H</span><span>Homesteader</span></a>
+    <div class="header-actions"><span id="account-email" class="account-email"></span><button id="sign-out" class="text-button" type="button" hidden>Sign out</button></div>
+  </header>
+  <main>
+    <section id="loading" class="state-card"><h1>Loading questionnaire...</h1></section>
+    <section id="access-message" class="state-card" hidden><h1>Sign in to continue</h1><p id="access-text">Open Homesteader and sign in with Google to take the questionnaire.</p><a class="primary-button button-link" href="./">Go to Homesteader</a></section>
+    <section id="questionnaire-view" class="questionnaire-page" hidden>
+      <div class="page-intro"><span class="eyebrow">Your introduction</span><h1>Homesteader Questionnaire</h1><p>Answer these 30 questions about your experience, availability, and approach to homesteading. Only you and Homesteader admins can see your answers. You can return to update them.</p><a class="text-button" href="./">Back to your profile</a></div>
+      <form id="questionnaire-form" class="card questionnaire-card">
+        <p id="questionnaire-progress" class="field-count">0 of 30 answered</p>
+        <div id="questions-list"></div>
+        <button id="save-questionnaire" class="primary-button" type="submit">Save answers</button>
+        <p id="questionnaire-message" class="message" role="status"></p>
+      </form>
+    </section>
+  </main>
+  <script type="module" src="questionnaire.js"></script>
+</body>
+</html>

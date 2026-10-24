@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#234837">
+  <meta name="robots" content="noindex,nofollow">
+  <title>Private Profiles | Homesteader</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="site-header">
+    <a class="brand" href="./" aria-label="Homesteader home"><span class="brand-mark">H</span><span>Homesteader</span></a>
+    <div class="header-actions"><span id="account-email" class="account-email"></span><button id="sign-out" class="text-button" type="button" hidden>Sign out</button></div>
+  </header>
+  <main>
+    <section id="loading" class="state-card"><h1>Opening private profiles...</h1></section>
+    <section id="access-message" class="state-card" hidden><h1>Admin access required</h1><p id="access-text">Sign in with an admin Google account to review profiles.</p><a class="primary-button button-link" href="./">Go to Homesteader</a></section>
+    <section id="profiles-view" hidden>
+      <div class="page-intro"><span class="eyebrow">Admin workspace</span><h1>Applicant profiles</h1><p>Profiles are listed alphabetically. Select a person to load their full introduction, photos, questionnaire, and private conversation.</p><a class="text-button" href="./">Back to admin home</a></div>
+      <p id="page-message" class="message" role="status"></p>
+      <div class="admin-grid">
+        <aside class="card applicant-list-card">
+          <div class="section-heading"><h2>Profiles</h2><span id="applicant-count" class="count">0</span></div>
+          <label for="applicant-search">Search by name, location, or email</label>
+          <input id="applicant-search" type="search" placeholder="Search applicants">
+          <div id="applicant-list" class="applicant-list"></div>
+          <p id="applicant-empty" class="muted">No profiles submitted yet.</p>
+          <div class="pagination"><button id="previous-page" class="text-button" type="button">Previous</button><span id="page-label">Page 1 of 1</span><button id="next-page" class="text-button" type="button">Next</button></div>
+          <details class="blocked-section"><summary>Blocked accounts</summary><div id="blocked-list" class="applicant-list"></div></details>
+        </aside>
+        <div id="admin-detail-empty" class="card detail-empty">Select a profile to review it.</div>
+        <div id="admin-detail" class="detail-column" hidden>
+          <article class="card">
+            <div class="section-heading"><h2 id="detail-name"></h2><span id="detail-status" class="status-pill"></span></div>
+            <p id="detail-email" class="detail-line"></p><p id="detail-location" class="detail-line"></p>
+            <div id="detail-photos" class="detail-photos"></div>
+            <div class="detail-label">Introduction</div><p id="detail-bio" class="detail-bio"></p>
+            <details id="questionnaire-results" class="questionnaire-results"><summary id="questionnaire-summary">Questionnaire: not completed</summary><div id="questionnaire-answers"></div></details>
+            <label for="review-status">Review status</label>
+            <div class="review-row"><select id="review-status"><option value="submitted">Submitted</option><option value="reviewing">Reviewing</option><option value="good-fit">Good fit</option><option value="declined">Declined</option></select><button id="save-review" class="secondary-button" type="button">Save status</button></div>
+            <p id="review-message" class="message" role="status"></p>
+            <div class="account-actions"><button id="block-applicant" class="secondary-button" type="button">Block account</button><button id="delete-applicant" class="danger-button" type="button">Delete profile and block account</button></div>
+            <p id="account-action-message" class="message" role="status"></p>
+          </article>
+          <section class="card">
+            <div class="inbox-heading"><span class="inbox-icon" aria-hidden="true">✉</span><div><span class="eyebrow">Private conversation</span><h2>Messages</h2></div></div>
+            <div id="admin-messages" class="messages" aria-live="polite"></div>
+            <p id="admin-chat-empty" class="muted">Start the conversation with a message. The applicant can reply after you do.</p>
+            <form id="admin-message-form" class="message-form"><label for="admin-message">Message to applicant</label><textarea id="admin-message" maxlength="2000" rows="3" required></textarea><button id="admin-send" class="primary-button" type="submit">Send message</button></form>
+            <p id="admin-message-status" class="message" role="status"></p>
+          </section>
+        </div>
+      </div>
+    </section>
+  </main>
+  <script type="module" src="profiles.js"></script>
+</body>
+</html>

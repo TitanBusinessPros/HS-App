@@ -24,7 +24,13 @@
     <section id="profiles-view" hidden>
       <div class="page-intro"><span class="eyebrow">Admin workspace</span><h1>Applicant profiles</h1><p>Profiles are listed alphabetically. Select a person to load their full introduction, photos, skills, questionnaire, and private conversation.</p><a class="text-button" href="./">Back to admin home</a></div>
       <p id="page-message" class="message" role="status"></p>
-      <details class="card questionnaire-editor-card">
+      <section id="admin-management" class="card skill-ranking-card" hidden>
+        <h2>Manage admins</h2>
+        <p class="muted">Only the master admin can remove another admin's access. Removed admins can no longer review applicants or send interview invitations.</p>
+        <div id="admin-list" class="admin-list"></div>
+        <p id="admin-management-message" class="message" role="status"></p>
+      </section>
+      <details id="questionnaire-editor" class="card questionnaire-editor-card" hidden>
         <summary>Manage questionnaire</summary>
         <p class="muted">Edit sections, questions, and answer choices. Turning the questionnaire off hides it from applicants and stops new answers. Saved answers remain available for review.</p>
         <form id="questionnaire-editor-form" hidden>
@@ -36,7 +42,7 @@
           <p id="questionnaire-editor-message" class="message" role="status"></p>
         </form>
       </details>
-      <section class="card skill-ranking-card">
+      <section id="add-skill-card" class="card skill-ranking-card" hidden>
         <h2>Add a homestead skill</h2>
         <p class="muted">New skills appear in the applicant skill picker and the admin rankings.</p>
         <form id="add-skill-form">
@@ -85,7 +91,9 @@
                   <label><input type="radio" name="interview-mode" value="zoom"> Zoom interview</label>
                 </fieldset>
                 <label for="interview-date">Date and time</label><input id="interview-date" type="datetime-local" required>
-                <p class="field-help">Choose the date and time in your local time zone. The invitation will include your time zone.</p>
+                <p class="field-help">Choose the date and time in your device's local time zone.</p>
+                <label for="interview-zone-label">Time zone shown to the applicant</label><input id="interview-zone-label" maxlength="60" required placeholder="For example, Central Time (CT)">
+                <p class="field-help">Write a clear time zone name that matches the date and time above. The invitation will use this wording.</p>
                 <div id="meeting-link-row" hidden><label for="interview-link">Zoom meeting link <span class="optional">optional</span></label><input id="interview-link" type="text" inputmode="url" maxlength="300" placeholder="https://zoom.us/..."></div>
                 <label for="interview-note-input">Message to applicant <span class="optional">optional</span></label><textarea id="interview-note-input" rows="3" maxlength="1000" placeholder="Add details or questions for the applicant."></textarea>
                 <div class="review-row"><button id="schedule-interview" class="primary-button" type="submit">Send interview invitation</button><button id="cancel-interview" class="secondary-button" type="button" disabled>Cancel interview</button></div>

@@ -141,6 +141,8 @@ function start() {
       isAdmin = (await getDoc(doc(db, 'admins', user.uid))).exists();
       if (generation !== authGeneration) return;
       if (isAdmin) {
+        $('admin-homestead-link').textContent = user.email?.toLowerCase() === 'titanbusinesspros@gmail.com' ?
+          'Edit homestead page' : 'View homestead page';
         showView('admin-view');
       } else {
         showView('member-view');
@@ -232,10 +234,15 @@ function start() {
     if (!date) return;
     const label = ({ phone: 'Phone', 'in-person': 'In-person', zoom: 'Zoom' })[interview.mode] || 'Interview';
     $('interview-heading').textContent = `${label} interview`;
-    $('interview-time').textContent = `Scheduled for ${date.toLocaleString(undefined, {
-      weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
-      hour: 'numeric', minute: '2-digit', timeZoneName: 'short'
-    })} in your time zone.`;
+    let scheduled = date.toLocaleString();
+    let timeZoneLabel = interview.timeZoneLabel || '';
+    try {
+      const zone = interview.timeZone || undefined;
+      scheduled = new Intl.DateTimeFormat('en-US', { dateStyle: 'full', timeStyle: 'short', timeZone: zone }).format(date);
+      if (!timeZoneLabel) timeZoneLabel = new Intl.DateTimeFormat('en-US', { timeZone: zone, timeZoneName: 'long' })
+        .formatToParts(date).find(part => part.type === 'timeZoneName')?.value || '';
+    } catch { /* Older invitations can fall back to the applicant's local time. */ }
+    $('interview-time').textContent = `Scheduled for ${scheduled}${timeZoneLabel ? ` ${timeZoneLabel}` : ''}. Your local time: ${date.toLocaleString()}.`;
     $('interview-admin').textContent = `Your contact: ${interview.contactAdminEmail || 'a Homesteader admin'}`;
     $('interview-note').textContent = interview.note || '';
     $('interview-note').hidden = !interview.note;

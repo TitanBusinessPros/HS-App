@@ -19,6 +19,60 @@ const customSkillPattern = /^custom_[a-f0-9]{32}$/;
 const applicationLimit = 500;
 const applicationStatsRef = db.doc('applicationStats/main');
 const questionnaireConfigRef = db.doc('questionnaireConfig/main');
+const masterAdminEmail = 'titanbusinesspros@gmail.com';
+
+function hasMasterEmail(user) {
+  return user.token.email?.toLowerCase() === masterAdminEmail;
+}
+
+async function assertMasterAdmin(user) {
+  if (!hasMasterEmail(user)) throw new HttpsError('permission-denied', 'Master admin access required.');
+  const [blocked, admin, account] = await Promise.all([
+    db.doc(`blockedUsers/${user.uid}`).get(), db.doc(`admins/${user.uid}`).get(), auth.getUser(user.uid)
+  ]);
+  if (blocked.exists || !admin.exists || account.email?.toLowerCase() !== masterAdminEmail) {
+    throw new HttpsError('permission-denied', 'Master admin access required.');
+  }
+}
+
+export const listAdmins = onCall(options, async request => {
+  const user = caller(request);
+  await assertMasterAdmin(user);
+  const snapshot = await db.collection('admins').get();
+  const admins = await Promise.all(snapshot.docs.map(async document => {
+    try {
+      const account = await auth.getUser(document.id);
+      return { uid: document.id, email: account.email || '', name: account.displayName || '', master: document.id === user.uid };
+    } catch (error) {
+      if (error.code !== 'auth/user-not-found') throw error;
+      return { uid: document.id, email: '', name: '', master: false };
+    }
+  }));
+  return { admins: admins.sort((a, b) => Number(b.master) - Number(a.master) || a.email.localeCompare(b.email)) };
+});
+
+export const removeAdmin = onCall(options, async request => {
+  const user = caller(request);
+  await assertMasterAdmin(user);
+  const uid = request.data?.uid;
+  if (typeof uid !== 'string' || !uid || uid.includes('/') || uid === user.uid) invalid('Choose another admin to remove.');
+  let targetAccount;
+  try { targetAccount = await auth.getUser(uid); }
+  catch (error) { if (error.code !== 'auth/user-not-found') throw error; }
+  if (targetAccount?.email?.toLowerCase() === masterAdminEmail) {
+    throw new HttpsError('permission-denied', 'The master admin cannot be removed.');
+  }
+  await db.runTransaction(async transaction => {
+    await assertActive(transaction, user.uid);
+    const [master, target] = await Promise.all([
+      transaction.get(db.doc(`admins/${user.uid}`)), transaction.get(db.doc(`admins/${uid}`))
+    ]);
+    if (!master.exists || !hasMasterEmail(user)) throw new HttpsError('permission-denied', 'Master admin access required.');
+    if (!target.exists) throw new HttpsError('not-found', 'This admin has already been removed.');
+    transaction.delete(target.ref);
+  });
+  return { removed: true };
+});
 
 function validSkillId(id) {
   return (Number.isInteger(id) && id >= 0 && id < 100) ||
@@ -312,7 +366,7 @@ export const saveQuestionnaireConfig = onCall({ ...options, timeoutSeconds: 120 
     return { section, prompt, choices };
   });
   if (textLength > 30000) invalid('Shorten the questionnaire before saving.');
-  await assertAdmin(user.uid);
+  await assertMasterAdmin(user);
   const text = questions.map(question => [question.section, question.prompt, ...question.choices].join('\n')).join('\n');
   for (let index = 0; index < text.length; index += 5000) await checkText(text.slice(index, index + 5000));
   const revision = await db.runTransaction(async transaction => {
@@ -320,7 +374,7 @@ export const saveQuestionnaireConfig = onCall({ ...options, timeoutSeconds: 120 
     const [admin, current] = await Promise.all([
       transaction.get(db.doc(`admins/${user.uid}`)), transaction.get(questionnaireConfigRef)
     ]);
-    if (!admin.exists) throw new HttpsError('permission-denied', 'Admin access required.');
+    if (!admin.exists || !hasMasterEmail(user)) throw new HttpsError('permission-denied', 'Master admin access required.');
     const currentRevision = current.data()?.revision || 0;
     if (currentRevision !== expectedRevision) {
       throw new HttpsError('aborted', 'The questionnaire changed in another session. Reload before saving.');
@@ -394,12 +448,16 @@ export const manageInterview = onCall(options, async request => {
     const rawTime = request.data?.scheduledAt;
     const date = typeof rawTime === 'string' ? new Date(rawTime) : new Date(NaN);
     const timeZone = typeof request.data?.timeZone === 'string' ? request.data.timeZone : 'UTC';
+    const timeZoneLabel = typeof request.data?.timeZoneLabel === 'string' ? request.data.timeZoneLabel.trim() : '';
     const note = typeof request.data?.note === 'string' ? request.data.note.trim() : '';
     const meetingLink = cleanExternalUrl(request.data?.meetingLink);
     if (!modeLabel || !Number.isFinite(date.getTime()) || date.getTime() <= Date.now() ||
         date.getTime() > Date.now() + 365 * 24 * 60 * 60 * 1000 ||
         timeZone.length > 64 || note.length > 1000 || (mode !== 'zoom' && meetingLink)) {
       invalid('Choose an interview type and a future date and time.');
+    }
+    if (!timeZoneLabel || timeZoneLabel.length > 60 || /[<>\r\n/]/.test(timeZoneLabel)) {
+      invalid('Enter a readable time zone, such as Central Time (CT).');
     }
     let formatted;
     try {
@@ -410,10 +468,10 @@ export const manageInterview = onCall(options, async request => {
     if (note) await checkText(note);
     const contactEmail = user.token.email || 'a Homesteader admin';
     interview = {
-      mode, scheduledAt: Timestamp.fromDate(date), timeZone, note, meetingLink,
+      mode, scheduledAt: Timestamp.fromDate(date), timeZone, timeZoneLabel, note, meetingLink,
       contactAdminUid: user.uid, contactAdminEmail: contactEmail, updatedAt: FieldValue.serverTimestamp()
     };
-    invitation = `You are invited to a ${modeLabel} interview on ${formatted} (${timeZone}). ` +
+    invitation = `You are invited to a ${modeLabel} interview on ${formatted} ${timeZoneLabel}. ` +
       `${contactEmail} is your contact. Reply here to confirm the date and time or ask questions.` +
       (meetingLink ? `\nZoom link: ${meetingLink}` : '') + (note ? `\n${note}` : '');
   }
@@ -460,15 +518,20 @@ export const addSkill = onCall(options, async request => {
   const category = typeof request.data?.category === 'string' ? request.data.category.trim().replace(/\s+/g, ' ') : '';
   if (name.length < 2 || name.length > 80 || category.length < 2 || category.length > 50 ||
       /[\/\\]/.test(name + category)) invalid('Enter a skill and a category.');
-  const [blocked, admin] = await Promise.all([
-    db.doc(`blockedUsers/${user.uid}`).get(), db.doc(`admins/${user.uid}`).get()
-  ]);
-  if (blocked.exists || !admin.exists) throw new HttpsError('permission-denied', 'Admin access required.');
+  await assertMasterAdmin(user);
   await checkText(`${category}\n${name}`);
   const key = `${category.toLocaleLowerCase('en-US')}|${name.toLocaleLowerCase('en-US')}`;
   const id = `custom_${createHash('sha256').update(key).digest('hex').slice(0, 32)}`;
   try {
-    await db.doc(`skillCatalog/${id}`).create({ name, category, addedBy: user.uid, addedAt: FieldValue.serverTimestamp() });
+    await db.runTransaction(async transaction => {
+      await assertActive(transaction, user.uid);
+      if (!(await transaction.get(db.doc(`admins/${user.uid}`))).exists || !hasMasterEmail(user)) {
+        throw new HttpsError('permission-denied', 'Master admin access required.');
+      }
+      const skill = db.doc(`skillCatalog/${id}`);
+      if ((await transaction.get(skill)).exists) throw new HttpsError('already-exists', 'This skill is already in that category.');
+      transaction.create(skill, { name, category, addedBy: user.uid, addedAt: FieldValue.serverTimestamp() });
+    });
   } catch (error) {
     if (error.code === 6 || error.code === 'already-exists') {
       throw new HttpsError('already-exists', 'This skill is already in that category.');
@@ -567,13 +630,13 @@ async function assertAdmin(uid) {
 
 export const saveHomesteadPage = onCall({ ...options, timeoutSeconds: 120 }, async request => {
   const user = caller(request);
-  await assertAdmin(user.uid);
+  await assertMasterAdmin(user);
   const page = cleanHomesteadPage(request.data);
   const text = [page.name, page.description, ...page.fields.flatMap(field => [field.label, field.value])].join('\n');
   for (let index = 0; index < text.length; index += 5000) await checkText(text.slice(index, index + 5000));
   await db.runTransaction(async transaction => {
     await assertActive(transaction, user.uid);
-    if (!(await transaction.get(db.doc(`admins/${user.uid}`))).exists) throw new HttpsError('permission-denied', 'Admin access required.');
+    if (!(await transaction.get(db.doc(`admins/${user.uid}`))).exists || !hasMasterEmail(user)) throw new HttpsError('permission-denied', 'Master admin access required.');
     transaction.set(db.doc('homesteadPage/main'), {
       ...page, published: true, updatedBy: user.uid, updatedAt: FieldValue.serverTimestamp()
     }, { merge: true });
@@ -583,7 +646,7 @@ export const saveHomesteadPage = onCall({ ...options, timeoutSeconds: 120 }, asy
 
 export const addHomesteadPhoto = onCall({ ...options, timeoutSeconds: 120 }, async request => {
   const user = caller(request);
-  await assertAdmin(user.uid);
+  await assertMasterAdmin(user);
   const photo = request.data?.photo;
   if (typeof photo !== 'string' || photo.length > 200000 || !photoPattern.test(photo)) {
     invalid('Choose a JPG photo under 200 KB.');
@@ -596,7 +659,7 @@ export const addHomesteadPhoto = onCall({ ...options, timeoutSeconds: 120 }, asy
     const [admin, page] = await Promise.all([
       transaction.get(db.doc(`admins/${user.uid}`)), transaction.get(pageRef)
     ]);
-    if (!admin.exists) throw new HttpsError('permission-denied', 'Admin access required.');
+    if (!admin.exists || !hasMasterEmail(user)) throw new HttpsError('permission-denied', 'Master admin access required.');
     const count = page.data()?.photoCount || 0;
     if (count >= 20) throw new HttpsError('failed-precondition', 'The homestead page already has 20 photos.');
     transaction.create(photoRef, { photo, addedBy: user.uid, addedAt: FieldValue.serverTimestamp() });
@@ -607,6 +670,7 @@ export const addHomesteadPhoto = onCall({ ...options, timeoutSeconds: 120 }, asy
 
 export const deleteHomesteadPhoto = onCall(options, async request => {
   const user = caller(request);
+  await assertMasterAdmin(user);
   const id = request.data?.id;
   if (typeof id !== 'string' || !/^[A-Za-z0-9]{20}$/.test(id)) invalid('Choose a homestead photo to remove.');
   const pageRef = db.doc('homesteadPage/main');
@@ -616,7 +680,7 @@ export const deleteHomesteadPhoto = onCall(options, async request => {
     const [admin, page, photo] = await Promise.all([
       transaction.get(db.doc(`admins/${user.uid}`)), transaction.get(pageRef), transaction.get(photoRef)
     ]);
-    if (!admin.exists) throw new HttpsError('permission-denied', 'Admin access required.');
+    if (!admin.exists || !hasMasterEmail(user)) throw new HttpsError('permission-denied', 'Master admin access required.');
     if (!photo.exists) throw new HttpsError('not-found', 'Photo not found.');
     transaction.delete(photoRef);
     transaction.set(pageRef, { photoCount: Math.max(0, (page.data()?.photoCount || 1) - 1) }, { merge: true });

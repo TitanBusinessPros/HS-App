@@ -20,9 +20,13 @@ const manageApplicant = httpsCallable(functions, 'manageApplicant');
 const manageInterview = httpsCallable(functions, 'manageInterview');
 const addSkill = httpsCallable(functions, 'addSkill');
 const saveQuestionnaireConfig = httpsCallable(functions, 'saveQuestionnaireConfig');
+const listAdmins = httpsCallable(functions, 'listAdmins');
+const removeAdmin = httpsCallable(functions, 'removeAdmin');
+const masterAdminEmail = 'titanbusinesspros@gmail.com';
 const pageSize = 25;
 const nameCollator = new Intl.Collator(undefined, { sensitivity: 'base' });
 let currentUser = null;
+let isMasterAdmin = false;
 let applicants = [];
 let blocked = new Map();
 let selectedUid = null;
@@ -263,6 +267,13 @@ function localDateTime(date) {
   return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
 }
 
+function readableTimeZone(date, timeZone) {
+  try {
+    return new Intl.DateTimeFormat('en-US', { timeZone, timeZoneName: 'long' })
+      .formatToParts(date).find(part => part.type === 'timeZoneName')?.value || 'local time';
+  } catch { return 'local time'; }
+}
+
 function toggleMeetingLink() {
   const mode = document.querySelector('input[name="interview-mode"]:checked')?.value;
   $('meeting-link-row').hidden = mode !== 'zoom';
@@ -272,16 +283,63 @@ function toggleMeetingLink() {
 function renderInterviewEditor(interview) {
   const date = interview?.scheduledAt?.toDate?.();
   selectedInterviewScheduled = Boolean(date);
+  const timeZoneLabel = date ? interview.timeZoneLabel || readableTimeZone(date, interview.timeZone) : '';
+  const scheduledTime = date ? new Intl.DateTimeFormat('en-US', {
+    dateStyle: 'medium', timeStyle: 'short', timeZone: interview.timeZone || undefined
+  }).format(date) : '';
   $('current-interview').textContent = date ?
-    `${({ phone: 'Phone', 'in-person': 'In-person', zoom: 'Zoom' })[interview.mode] || 'Interview'} interview scheduled for ${date.toLocaleString()}. Contact: ${interview.contactAdminEmail || 'Homesteader admin'}.` :
+    `${({ phone: 'Phone', 'in-person': 'In-person', zoom: 'Zoom' })[interview.mode] || 'Interview'} interview scheduled for ${scheduledTime} ${timeZoneLabel}. Contact: ${interview.contactAdminEmail || 'Homesteader admin'}.` :
     'No interview scheduled.';
   for (const radio of document.querySelectorAll('input[name="interview-mode"]')) radio.checked = radio.value === interview?.mode;
   $('interview-date').value = date ? localDateTime(date) : '';
+  $('interview-zone-label').value = timeZoneLabel;
   $('interview-note-input').value = interview?.note || '';
   toggleMeetingLink();
   $('interview-link').value = interview?.meetingLink || '';
   $('schedule-interview').disabled = blocked.has(selectedUid);
   $('cancel-interview').disabled = blocked.has(selectedUid) || !date;
+}
+
+async function loadAdmins(generation) {
+  try {
+    const result = await listAdmins();
+    if (generation !== authGeneration || !isMasterAdmin) return;
+    const list = $('admin-list');
+    list.replaceChildren();
+    for (const admin of result.data.admins || []) {
+      const row = document.createElement('div');
+      row.className = 'admin-row';
+      const identity = document.createElement('div');
+      const name = document.createElement('strong');
+      name.textContent = admin.email || admin.name || `Account ${admin.uid}`;
+      const detail = document.createElement('span');
+      detail.textContent = admin.master ? 'Master admin' : 'Admin';
+      identity.append(name, detail);
+      row.append(identity);
+      if (!admin.master) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'danger-button';
+        button.textContent = 'Remove admin';
+        button.addEventListener('click', async () => {
+          if (!confirm(`Remove admin access for ${admin.email || admin.name || admin.uid}?`)) return;
+          button.disabled = true;
+          try {
+            await removeAdmin({ uid: admin.uid });
+            status('admin-management-message', 'Admin access removed.');
+            await loadAdmins(generation);
+          } catch (error) {
+            status('admin-management-message', error.message || 'Could not remove admin.', true);
+            button.disabled = false;
+          }
+        });
+        row.append(button);
+      }
+      list.append(row);
+    }
+  } catch (error) {
+    if (generation === authGeneration) status('admin-management-message', error.message || 'Could not load admins.', true);
+  }
 }
 
 function renderQuestionnaire(data) {
@@ -395,6 +453,7 @@ $('add-question').addEventListener('click', () => {
 });
 $('questionnaire-editor-form').addEventListener('submit', async event => {
   event.preventDefault();
+  if (!isMasterAdmin) return status('questionnaire-editor-message', 'Master admin access required.', true);
   const button = $('save-questionnaire-config');
   button.disabled = true;
   status('questionnaire-editor-message', 'Saving questionnaire...');
@@ -537,6 +596,10 @@ $('rank-skill').addEventListener('change', () => {
 onAuthStateChanged(auth, async user => {
   const generation = ++authGeneration;
   cleanSubscriptions();
+  isMasterAdmin = false;
+  $('admin-management').hidden = true;
+  $('questionnaire-editor').hidden = true;
+  $('add-skill-card').hidden = true;
   questionnaireDirty = false;
   $('questionnaire-editor-form').hidden = true;
   currentUser = user;
@@ -553,15 +616,20 @@ onAuthStateChanged(auth, async user => {
     if ((await getDoc(doc(db, 'blockedUsers', user.uid))).exists()) return showAccess('This account cannot use Homesteader.');
     if (!(await getDoc(doc(db, 'admins', user.uid))).exists()) return showAccess('Only Homesteader admins can view applicant profiles.');
     if (generation !== authGeneration) return;
+    isMasterAdmin = user.email?.toLowerCase() === masterAdminEmail;
+    $('admin-management').hidden = !isMasterAdmin;
+    $('questionnaire-editor').hidden = !isMasterAdmin;
+    $('add-skill-card').hidden = !isMasterAdmin;
+    if (isMasterAdmin) loadAdmins(generation);
     $('loading').hidden = true;
     $('access-message').hidden = true;
     $('profiles-view').hidden = false;
-    questionnaireConfigUnsub = onSnapshot(doc(db, 'questionnaireConfig', 'main'), snapshot => {
+    if (isMasterAdmin) questionnaireConfigUnsub = onSnapshot(doc(db, 'questionnaireConfig', 'main'), snapshot => {
       if (generation !== authGeneration) return;
       const config = snapshot.data();
       const revision = config?.revision || 0;
       if (questionnaireDirty) {
-        if (revision !== questionnaireRevision) status('questionnaire-editor-message', 'Another admin changed the questionnaire. Reload this page before saving.', true);
+        if (revision !== questionnaireRevision) status('questionnaire-editor-message', 'The questionnaire changed in another session. Reload this page before saving.', true);
         return;
       }
       questionnaireRevision = revision;
@@ -611,13 +679,22 @@ $('rank-previous').addEventListener('click', () => { if (rankPage > 0) { rankPag
 $('rank-next').addEventListener('click', () => { if ((rankPage + 1) * pageSize < rankedApplicants().length) { rankPage++; renderRanking(); } });
 
 for (const radio of document.querySelectorAll('input[name="interview-mode"]')) radio.addEventListener('change', toggleMeetingLink);
+$('interview-date').addEventListener('change', () => {
+  if ($('interview-zone-label').value.trim()) return;
+  const date = new Date($('interview-date').value);
+  if (Number.isFinite(date.getTime())) $('interview-zone-label').value = readableTimeZone(date);
+});
 $('interview-form').addEventListener('submit', async event => {
   event.preventDefault();
   const uid = selectedUid;
   const mode = document.querySelector('input[name="interview-mode"]:checked')?.value;
   const when = new Date($('interview-date').value);
+  const timeZoneLabel = $('interview-zone-label').value.trim();
   if (!uid || !mode || !Number.isFinite(when.getTime()) || when.getTime() <= Date.now()) {
     return status('interview-message', 'Choose an interview type and a future date and time.', true);
+  }
+  if (!timeZoneLabel || timeZoneLabel.length > 60 || /[<>\r\n/]/.test(timeZoneLabel)) {
+    return status('interview-message', 'Enter a readable time zone, such as Central Time (CT).', true);
   }
   let meetingLink = '';
   try { meetingLink = mode === 'zoom' ? normalizeExternalUrl($('interview-link').value) : ''; }
@@ -628,6 +705,7 @@ $('interview-form').addEventListener('submit', async event => {
     await manageInterview({
       uid, action: 'schedule', mode, scheduledAt: when.toISOString(),
       timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
+      timeZoneLabel,
       note: $('interview-note-input').value.trim(), meetingLink
     });
     if (selectedUid === uid) status('interview-message', 'Invitation sent. The applicant can reply in their inbox.');
@@ -654,6 +732,7 @@ $('cancel-interview').addEventListener('click', async () => {
 
 $('add-skill-form').addEventListener('submit', async event => {
   event.preventDefault();
+  if (!isMasterAdmin) return status('add-skill-message', 'Master admin access required.', true);
   const button = $('add-skill');
   const name = $('new-skill-name').value.trim();
   const category = $('new-skill-category').value.trim();

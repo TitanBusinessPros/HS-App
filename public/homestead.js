@@ -19,6 +19,7 @@ const suggestedTopics = [
   'Current residents', 'Maximum residents'
 ];
 let isAdmin = false;
+let isMasterAdmin = false;
 let pageUnsub = null;
 let photosUnsub = null;
 let authGeneration = 0;
@@ -100,7 +101,7 @@ function renderPage(data) {
     }
     $('homestead-details-section').hidden = !details.childElementCount;
   }
-  if (isAdmin && !editorInitialized) {
+  if (isMasterAdmin && !editorInitialized) {
     $('edit-homestead-name').value = data?.name || '';
     $('edit-homestead-description').value = data?.description || '';
     topics = Array.isArray(data?.fields) ? data.fields.map(field => ({ label: field.label, value: field.value })) :
@@ -123,7 +124,7 @@ function renderPhotos() {
     img.src = item.photo;
     img.alt = `Homestead photo ${index + 1}`;
     card.append(img);
-    if (isAdmin) {
+    if (isMasterAdmin) {
       const remove = document.createElement('button');
       remove.type = 'button';
       remove.className = 'text-button';
@@ -156,6 +157,7 @@ onAuthStateChanged(auth, async user => {
   pageUnsub = photosUnsub = null;
   editorInitialized = false;
   isAdmin = false;
+  isMasterAdmin = false;
   photos = [];
   renderPhotos();
   $('account-email').textContent = user?.email || '';
@@ -166,8 +168,9 @@ onAuthStateChanged(auth, async user => {
     if (token.claims.firebase?.sign_in_provider !== 'google.com') return showAccess('Sign in with Google to continue.');
     if ((await getDoc(doc(db, 'blockedUsers', user.uid))).exists()) return showAccess('This account cannot use Homesteader.');
     isAdmin = (await getDoc(doc(db, 'admins', user.uid))).exists();
+    isMasterAdmin = isAdmin && user.email?.toLowerCase() === 'titanbusinesspros@gmail.com';
     if (generation !== authGeneration) return;
-    $('admin-editor').hidden = !isAdmin;
+    $('admin-editor').hidden = !isMasterAdmin;
     $('loading').hidden = true;
     $('access-message').hidden = true;
     $('page-view').hidden = false;
@@ -198,6 +201,7 @@ $('add-topic').addEventListener('click', () => {
 });
 $('homestead-form').addEventListener('submit', async event => {
   event.preventDefault();
+  if (!isMasterAdmin) return status('save-page-message', 'Master admin access required.', true);
   if (wordCount() > 2000) return status('save-page-message', 'Keep the description within 2,000 words.', true);
   const button = $('save-homestead');
   button.disabled = true;
@@ -216,6 +220,7 @@ $('homestead-form').addEventListener('submit', async event => {
 });
 
 $('add-homestead-photos').addEventListener('change', async event => {
+  if (!isMasterAdmin) return status('photo-upload-message', 'Master admin access required.', true);
   const files = [...(event.target.files || [])];
   event.target.value = '';
   if (!files.length) return;

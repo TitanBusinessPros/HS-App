@@ -1,6 +1,6 @@
 # Homesteader project memory
 
-This file records decisions and current state for future work. Keep it in sync with the app and README. Do not put service account credentials, private keys, or other secrets here.
+This file records decisions and current state for future work. Keep it in sync with the app and the locally maintained README. Do not put service account credentials, private keys, or other secrets here.
 
 ## Product decisions
 
@@ -26,4 +26,4 @@ This file records decisions and current state for future work. Keep it in sync w
 
 - The skill feature was pushed in commit `052c889`. Its Cloud Function and Firestore rules deployed successfully, and the GitHub Pages publishing workflow succeeded.
 - A signed-in, end-to-end walkthrough of applicant skill saving and admin rankings has not yet been completed. The same applies to photo upload and messaging.
-- Push future app and documentation changes to the GitHub repository as requested by the project owner.
+- Keep the GitHub repository's tracked `README.md` empty. Maintain the full `README.md` only in the local project folder; never stage or push its local content. Push app and project-memory changes to the GitHub repository as requested by the project owner.

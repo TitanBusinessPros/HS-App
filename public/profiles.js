@@ -57,6 +57,10 @@ let teamMembersUnsub = null;
 let teams = [];
 let rosterMemberIds = [];
 let selectedTeamId = null;
+let applicantTeamUnsubs = new Map();
+let applicantTeamIds = new Set();
+let applicantTeamPending = new Set();
+let assignApplicantBusy = false;
 let catalogUnsub = null;
 let questionnaireConfigUnsub = null;
 let questionnaireDraft = [];
@@ -101,6 +105,11 @@ function timed(promise, label, milliseconds = 12000) {
 
 function cleanSelection() {
   for (const unsub of [profileUnsub, questionnaireUnsub, skillsUnsub, conversationUnsub, messagesUnsub]) if (unsub) unsub();
+  for (const unsub of applicantTeamUnsubs.values()) unsub();
+  applicantTeamUnsubs = new Map();
+  applicantTeamIds = new Set();
+  applicantTeamPending = new Set();
+  assignApplicantBusy = false;
   profileUnsub = questionnaireUnsub = skillsUnsub = conversationUnsub = messagesUnsub = null;
   selectedUid = null;
   selectedInterviewScheduled = false;
@@ -109,6 +118,8 @@ function cleanSelection() {
   photoPreview.hidden = true;
   $('detail-photos').replaceChildren();
   $('admin-messages').replaceChildren();
+  $('applicant-team-list').replaceChildren();
+  status('assign-applicant-message', '');
   $('admin-detail').hidden = true;
   $('admin-detail-empty').hidden = false;
 }
@@ -228,19 +239,76 @@ function renderBlockedList() {
   }
 }
 
-function renderTeamApplicantOptions() {
-  const select = $('team-applicant');
+function renderApplicantTeams() {
+  const list = $('applicant-team-list');
+  const select = $('assign-applicant-team');
   const previous = select.value;
-  const term = $('team-applicant-search').value.trim().toLowerCase();
-  const members = new Set(rosterMemberIds);
-  select.replaceChildren(new Option('Choose an applicant', ''));
-  for (const person of applicants) {
-    if (blocked.has(person.uid) || members.has(person.uid)) continue;
-    const label = `${person.name || 'Unnamed'} · ${person.email || ''}`;
-    if (term && !label.toLowerCase().includes(term)) continue;
-    select.add(new Option(label, person.uid));
+  list.replaceChildren();
+  select.replaceChildren(new Option('Choose a team', ''));
+  for (const team of teams) {
+    if (!applicantTeamIds.has(team.id)) {
+      select.add(new Option(team.name, team.id));
+      continue;
+    }
+    const row = document.createElement('div');
+    row.className = 'roster-member-row';
+    const name = document.createElement('strong');
+    name.textContent = team.name;
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'text-button';
+    remove.textContent = 'Remove';
+    remove.addEventListener('click', async () => {
+      const uid = selectedUid;
+      remove.disabled = true;
+      try {
+        await setTeamMember({ action: 'remove', teamId: team.id, uid });
+        if (selectedUid === uid) status('assign-applicant-message', `Removed from ${team.name}.`);
+      } catch (error) {
+        if (selectedUid === uid) status('assign-applicant-message', error.message || 'Could not remove this applicant.', true);
+        remove.disabled = false;
+      }
+    });
+    row.append(name, remove);
+    list.append(row);
   }
   if ([...select.options].some(option => option.value === previous)) select.value = previous;
+  const loading = applicantTeamPending.size > 0;
+  $('applicant-team-empty').hidden = applicantTeamIds.size > 0;
+  $('applicant-team-empty').textContent = loading ? 'Loading teams...' : 'Not on a team yet.';
+  select.disabled = assignApplicantBusy || blocked.has(selectedUid) || select.options.length < 2;
+  $('assign-applicant-team-button').disabled = select.disabled;
+}
+
+function syncApplicantTeamListeners() {
+  for (const [teamId, unsub] of applicantTeamUnsubs) {
+    if (selectedUid && teams.some(team => team.id === teamId)) continue;
+    unsub();
+    applicantTeamUnsubs.delete(teamId);
+    applicantTeamIds.delete(teamId);
+    applicantTeamPending.delete(teamId);
+  }
+  if (!selectedUid) return renderApplicantTeams();
+  const uid = selectedUid;
+  const generation = authGeneration;
+  for (const team of teams) {
+    if (applicantTeamUnsubs.has(team.id)) continue;
+    applicantTeamPending.add(team.id);
+    const unsub = onSnapshot(doc(db, 'teams', team.id, 'members', uid), snapshot => {
+      if (generation !== authGeneration || selectedUid !== uid) return;
+      applicantTeamPending.delete(team.id);
+      if (snapshot.exists()) applicantTeamIds.add(team.id);
+      else applicantTeamIds.delete(team.id);
+      renderApplicantTeams();
+    }, error => {
+      if (generation !== authGeneration || selectedUid !== uid) return;
+      applicantTeamPending.delete(team.id);
+      status('assign-applicant-message', error.message || 'Could not load team membership.', true);
+      renderApplicantTeams();
+    });
+    applicantTeamUnsubs.set(team.id, unsub);
+  }
+  renderApplicantTeams();
 }
 
 function renderTeamMembers() {
@@ -293,7 +361,6 @@ function renderTeamMembers() {
     row.append(details, actions);
     list.append(row);
   }
-  renderTeamApplicantOptions();
 }
 
 function renderTeams() {
@@ -321,7 +388,6 @@ function selectTeam(teamId) {
   selectedTeamId = teamId;
   rosterMemberIds = [];
   $('team-detail').hidden = !teamId;
-  $('team-applicant-search').value = '';
   status('team-message', '');
   renderTeams();
   if (!teamId) return;
@@ -369,6 +435,7 @@ function renderProfile(person) {
   $('admin-detail-empty').hidden = true;
   $('admin-detail').hidden = false;
   $('detail-name').textContent = person.profile?.name || 'Unnamed';
+  $('roster-applicant-name').textContent = person.profile?.name || 'this applicant';
   $('detail-status').textContent = blocked.has(selectedUid) ? 'Blocked' : statusLabel(person.status);
   $('detail-email').textContent = person.email || '';
   $('detail-location').textContent = person.profile?.location ? `Location: ${person.profile.location}` : 'Location not provided';
@@ -758,6 +825,7 @@ function selectApplicant(uid) {
   if (uid === selectedUid) return;
   cleanSelection();
   selectedUid = uid;
+  syncApplicantTeamListeners();
   renderList();
   const selected = uid;
   profileUnsub = onSnapshot(doc(db, 'users', uid), snapshot => {
@@ -918,6 +986,7 @@ onAuthStateChanged(auth, async user => {
       if (selectedTeamId && !teams.some(team => team.id === selectedTeamId)) selectTeam(null);
       else if (!selectedTeamId && teams.length) selectTeam(teams[0].id);
       else renderTeams();
+      syncApplicantTeamListeners();
     }, error => status('roster-message', error.message || 'Could not load teams.', true));
     summariesUnsub = onSnapshot(collection(db, 'applicantSummaries'), snapshot => {
       if (generation !== authGeneration) return;
@@ -932,6 +1001,7 @@ onAuthStateChanged(auth, async user => {
       renderList();
       renderRanking();
       renderTeamMembers();
+      if (selectedUid) renderApplicantTeams();
     }, error => status('page-message', error.message || 'Could not load profiles.', true));
     blockedUnsub = onSnapshot(collection(db, 'blockedUsers'), snapshot => {
       blocked = new Map(snapshot.docs.map(item => [item.id, item.data()]));
@@ -939,6 +1009,7 @@ onAuthStateChanged(auth, async user => {
       renderBlockedList();
       renderRanking();
       renderTeamMembers();
+      if (selectedUid) renderApplicantTeams();
       if (selectedUid) {
         $('detail-status').textContent = blocked.has(selectedUid) ? 'Blocked' : statusLabel(applicants.find(person => person.uid === selectedUid)?.status);
         $('block-applicant').textContent = blocked.has(selectedUid) ? 'Unblock account' : 'Block account';
@@ -987,22 +1058,21 @@ $('rename-team-form').addEventListener('submit', async event => {
   } catch (error) { if (selectedTeamId === teamId) status('team-message', error.message || 'Could not rename team.', true); }
   finally { button.disabled = false; }
 });
-$('team-applicant-search').addEventListener('input', renderTeamApplicantOptions);
-$('add-team-member-form').addEventListener('submit', async event => {
+$('assign-applicant-team-form').addEventListener('submit', async event => {
   event.preventDefault();
-  const teamId = selectedTeamId;
-  const uid = $('team-applicant').value;
+  const teamId = $('assign-applicant-team').value;
+  const uid = selectedUid;
   if (!teamId || !uid) return;
-  const button = event.submitter || event.target.querySelector('button[type="submit"]');
-  button.disabled = true;
+  assignApplicantBusy = true;
+  renderApplicantTeams();
   try {
     await setTeamMember({ action: 'add', teamId, uid });
-    if (selectedTeamId === teamId) {
-      $('team-applicant').value = '';
-      status('team-message', 'Applicant added to this team.');
+    if (selectedUid === uid) {
+      $('assign-applicant-team').value = '';
+      status('assign-applicant-message', `Added to ${teams.find(team => team.id === teamId)?.name || 'team'}.`);
     }
-  } catch (error) { if (selectedTeamId === teamId) status('team-message', error.message || 'Could not add this applicant.', true); }
-  finally { button.disabled = false; }
+  } catch (error) { if (selectedUid === uid) status('assign-applicant-message', error.message || 'Could not add this applicant.', true); }
+  finally { if (selectedUid === uid) { assignApplicantBusy = false; renderApplicantTeams(); } }
 });
 $('delete-team').addEventListener('click', async () => {
   const teamId = selectedTeamId;

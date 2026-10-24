@@ -23,7 +23,7 @@
     <section id="loading" class="state-card"><h1>Opening private profiles...</h1></section>
     <section id="access-message" class="state-card" hidden><h1>Private profiles</h1><p id="access-text">Sign in with an admin Google account to review profiles.</p><button id="retry-profiles" class="primary-button" type="button" hidden>Try again</button> <a class="primary-button button-link" href="./">Go to Homesteader</a></section>
     <section id="profiles-view" hidden>
-      <div class="page-intro"><span class="eyebrow">Admin workspace</span><h1>Applicant profiles</h1><p>Review applicants, organize teams on the roster, and select a person to view their introduction, photos, skills, questionnaire, and private conversation.</p><a class="text-button" href="./">Back to admin home</a></div>
+      <div class="page-intro"><span class="eyebrow">Admin workspace</span><h1>Applicant profiles</h1><p>Select an applicant to review their profile, add them to a homestead team, and see their skills, questionnaire, and private conversation.</p><a class="text-button" href="./">Back to admin home</a></div>
       <p id="page-message" class="message" role="status"></p>
       <section id="calendar-settings" class="card skill-ranking-card">
         <h2>My interview calendar</h2>
@@ -81,30 +81,6 @@
         <div id="admin-list" class="admin-list"></div>
         <p id="admin-management-message" class="message" role="status"></p>
       </section>
-      <section id="roster" class="card skill-ranking-card">
-        <h2>Homestead roster</h2>
-        <p class="muted">Create teams for each area of work, then add as many applicants as you need. An applicant can belong to more than one team.</p>
-        <form id="create-team-form" class="roster-create-form">
-          <div><label for="new-team-name">New team name</label><input id="new-team-name" maxlength="80" required placeholder="For example, Chicken Farmers"></div>
-          <button class="primary-button" type="submit">Create team</button>
-        </form>
-        <p id="roster-message" class="message" role="status"></p>
-        <div class="roster-layout">
-          <div><h3>Teams</h3><div id="team-list" class="roster-team-list"></div><p id="team-empty" class="muted">No teams yet. Create one above.</p></div>
-          <div id="team-detail" hidden>
-            <div class="section-heading"><h3 id="team-title"></h3><span id="team-member-count" class="count">0</span></div>
-            <form id="rename-team-form" class="roster-rename-form"><div><label for="team-name">Team name</label><input id="team-name" maxlength="80" required></div><button class="secondary-button" type="submit">Rename team</button></form>
-            <form id="add-team-member-form" class="roster-add-form">
-              <label for="team-applicant-search">Find an applicant</label><input id="team-applicant-search" type="search" placeholder="Search by name or email">
-              <label for="team-applicant">Applicant to add</label><select id="team-applicant" required><option value="">Choose an applicant</option></select>
-              <button class="primary-button" type="submit">Add to team</button>
-            </form>
-            <p id="team-message" class="message" role="status"></p>
-            <h4>Team members</h4><div id="team-members" class="roster-members"></div><p id="team-members-empty" class="muted">No applicants on this team yet.</p>
-            <button id="delete-team" class="danger-button" type="button">Delete team</button>
-          </div>
-        </div>
-      </section>
       <details id="questionnaire-editor" class="card questionnaire-editor-card" hidden>
         <summary>Manage questionnaire</summary>
         <p class="muted">Edit sections, questions, and answer choices. Turning the questionnaire off hides it from applicants and stops new answers. Saved answers remain available for review.</p>
@@ -149,6 +125,37 @@
         </aside>
         <div id="admin-detail-empty" class="card detail-empty">Select a profile to review it.</div>
         <div id="admin-detail" class="detail-column" hidden>
+          <section id="roster" class="card">
+            <h2>Homestead roster for <span id="roster-applicant-name">this applicant</span></h2>
+            <p class="muted">Add this applicant to any team. Applicants can join more than one team.</p>
+            <form id="assign-applicant-team-form" class="roster-assign-form">
+              <div><label for="assign-applicant-team">Choose a team</label><select id="assign-applicant-team" required><option value="">Choose a team</option></select></div>
+              <button id="assign-applicant-team-button" class="primary-button" type="submit">Add to team</button>
+            </form>
+            <p id="assign-applicant-message" class="message" role="status"></p>
+            <h3 class="roster-subheading">This applicant's teams</h3>
+            <div id="applicant-team-list" class="roster-members"></div>
+            <p id="applicant-team-empty" class="muted">Not on a team yet.</p>
+            <details class="roster-management">
+              <summary>Manage teams</summary>
+              <p class="muted">Create, rename, or delete teams and review their members.</p>
+              <form id="create-team-form" class="roster-create-form">
+                <div><label for="new-team-name">New team name</label><input id="new-team-name" maxlength="80" required placeholder="For example, Chicken Farmers"></div>
+                <button class="primary-button" type="submit">Create team</button>
+              </form>
+              <p id="roster-message" class="message" role="status"></p>
+              <div class="roster-layout">
+                <div><h3>Teams</h3><div id="team-list" class="roster-team-list"></div><p id="team-empty" class="muted">No teams yet. Create one above.</p></div>
+                <div id="team-detail" hidden>
+                  <div class="section-heading"><h3 id="team-title"></h3><span id="team-member-count" class="count">0</span></div>
+                  <form id="rename-team-form" class="roster-rename-form"><div><label for="team-name">Team name</label><input id="team-name" maxlength="80" required></div><button class="secondary-button" type="submit">Rename team</button></form>
+                  <p id="team-message" class="message" role="status"></p>
+                  <h4>Team members</h4><div id="team-members" class="roster-members"></div><p id="team-members-empty" class="muted">No applicants on this team yet.</p>
+                  <button id="delete-team" class="danger-button" type="button">Delete team</button>
+                </div>
+              </div>
+            </details>
+          </section>
           <article class="card">
             <div class="section-heading"><h2 id="detail-name"></h2><span id="detail-status" class="status-pill"></span></div>
             <p id="detail-email" class="detail-line"></p><p id="detail-location" class="detail-line"></p>

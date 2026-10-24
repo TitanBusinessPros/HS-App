@@ -26,6 +26,8 @@ function start() {
   const saveProfileCall = httpsCallable(functions, 'saveProfile');
   const sendMessageCall = httpsCallable(functions, 'sendMessage');
   const sanitizeMyContactsCall = httpsCallable(functions, 'sanitizeMyContacts');
+  const listInterviewSlotsCall = httpsCallable(functions, 'listInterviewSlots');
+  const bookInterviewSlotCall = httpsCallable(functions, 'bookInterviewSlot');
   let currentUser = null;
   let currentProfile = null;
   let isAdmin = false;
@@ -39,6 +41,7 @@ function start() {
   let questionnaireSettings = null;
   let skillsUnsub = null;
   let authGeneration = 0;
+  let shownBookingInvite = '';
   const photoPreview = document.createElement('img');
   photoPreview.className = 'photo-hover-preview';
   photoPreview.alt = '';
@@ -126,6 +129,7 @@ function start() {
     questionnaireSettings = null;
     profileInitialized = false;
     pendingPhotos = null;
+    shownBookingInvite = '';
     $('sign-out').hidden = !user;
     $('account-email').hidden = !user;
     $('account-email').textContent = user?.email || '';
@@ -220,6 +224,7 @@ function start() {
       const profile = currentProfile;
       $('profile-status').textContent = statusLabel(profile?.status || 'none');
       renderInterview(profile?.interview);
+      renderBookingInvite(profile?.bookingInvite, profile?.interview);
       if (!profileInitialized) {
         $('profile-name').value = profile?.profile?.name || '';
         $('profile-location').value = profile?.profile?.location || '';
@@ -249,7 +254,10 @@ function start() {
         .formatToParts(date).find(part => part.type === 'timeZoneName')?.value || '';
     } catch { /* Older invitations can fall back to the applicant's local time. */ }
     $('interview-time').textContent = `Scheduled for ${scheduled}${timeZoneLabel ? ` ${timeZoneLabel}` : ''}. Your local time: ${date.toLocaleString()}.`;
-    $('interview-admin').textContent = 'Your contact: a Homesteader admin';
+    $('interview-admin').textContent = `Your contact: ${interview.source === 'calendar' ? (interview.contactAdminEmail || 'a Homesteader admin') : 'a Homesteader admin'}`;
+    $('interview-help').textContent = interview.source === 'calendar' ?
+      'Your time is booked. Check your email for the Google Calendar invitation, or reply in your private inbox with questions.' :
+      'Reply in your private inbox to confirm the date and time or ask the admin questions.';
     $('interview-note').textContent = interview.note || '';
     $('interview-note').hidden = !interview.note;
     const meeting = $('interview-meeting-link');
@@ -263,6 +271,66 @@ function start() {
       meeting.removeAttribute('href');
     }
   }
+  function renderBookingInvite(invite, interview) {
+    const visible = invite && ['open', 'booking'].includes(invite.status) &&
+      invite.expiresAt?.toMillis?.() > Date.now() && !interview?.scheduledAt;
+    $('booking-section').hidden = !visible;
+    if (!visible) {
+      shownBookingInvite = '';
+      $('booking-slots').replaceChildren();
+      return;
+    }
+    $('booking-description').textContent = `${invite.adminEmail || 'A Homesteader admin'} invited you to choose a ${invite.mode === 'in-person' ? 'in-person' : invite.mode} interview time. Choose a time before ${invite.expiresAt.toDate().toLocaleDateString()}.`;
+    if (invite.status === 'booking') {
+      $('booking-slots').replaceChildren();
+      status('booking-message', 'Your booking is processing. Refresh available times after a few minutes if it does not finish.');
+      return;
+    }
+    const key = `${invite.adminUid}:${invite.createdAt?.toMillis?.()}`;
+    if (shownBookingInvite !== key) {
+      shownBookingInvite = key;
+      $('booking-slots').replaceChildren();
+      status('booking-message', 'Loading available times...');
+      loadBookingSlots();
+    }
+  }
+  async function loadBookingSlots() {
+    const button = $('refresh-booking-slots');
+    button.disabled = true;
+    try {
+      const { data } = await listInterviewSlotsCall();
+      const slots = $('booking-slots');
+      slots.replaceChildren();
+      for (const start of data.slots || []) {
+        const date = new Date(start);
+        const local = new Intl.DateTimeFormat('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }).format(date);
+        const adminTime = new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: '2-digit', timeZone: data.timeZone }).format(date);
+        const slot = document.createElement('button');
+        slot.type = 'button';
+        slot.className = 'secondary-button booking-slot';
+        slot.textContent = `${local} your time · ${adminTime} ${data.timeZoneLabel}`;
+        slot.addEventListener('click', () => bookSlot(start));
+        slots.append(slot);
+      }
+      status('booking-message', data.slots?.length ? 'Choose the time that works for you.' : 'No times are available right now. Please check again later or message the admin.');
+    } catch (error) { status('booking-message', readableError(error), true); }
+    finally { button.disabled = false; }
+  }
+  async function bookSlot(start) {
+    const buttons = $('booking-slots').querySelectorAll('button');
+    for (const button of buttons) button.disabled = true;
+    status('booking-message', 'Booking your interview...');
+    try {
+      await bookInterviewSlotCall({ start });
+      status('booking-message', 'Interview booked. Google Calendar has emailed your invitation.');
+      $('booking-slots').replaceChildren();
+    } catch (error) {
+      status('booking-message', readableError(error), true);
+      for (const button of buttons) button.disabled = false;
+      await loadBookingSlots();
+    }
+  }
+  $('refresh-booking-slots').addEventListener('click', loadBookingSlots);
   function updateWordCount() {
     const count = $('profile-bio').value.trim().split(/\s+/).filter(Boolean).length;
     $('word-count').textContent = `${count} / 500 words`;

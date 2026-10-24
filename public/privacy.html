@@ -28,15 +28,18 @@
         <li>Google sign-in information, including your account identifier, name, and email address.</li>
         <li>Information you submit, such as your introduction, location, website and social links, photos, questionnaire answers, selected skills and experience, messages, and interview details.</li>
         <li>Application records used for review and safety, such as submission dates, review status, admin access, and account blocks.</li>
+        <li>Interview booking invitations and times. If an admin connects Google Calendar, we store their calendar authorization securely in private server records and check busy times to offer available appointments.</li>
         <li>Technical information processed by the hosting, sign-in, and security services needed to operate the app, which may include device or network information.</li>
       </ul>
       <h2>How information is used</h2>
       <p>We use this information to authenticate users, review applications, contact applicants, arrange interviews, maintain the homestead page, screen submitted text and photos, and protect the application from misuse.</p>
+      <p>When an applicant books a calendar interview, we send their name and email address, the interview time, and any interview note or meeting link to Google Calendar to create an event on the connected admin's calendar and email the applicant an invitation. The calendar invitation may show the admin's Google account email. Applicants see available times, not the admin's other calendar events.</p>
       <h2>Who can access information</h2>
       <p>Within the app, an applicant can view their own private application and conversation. Authorized Homesteader admins can review applicant information and messages. Applicant profiles and conversations are not shown in a public directory.</p>
       <p>Google services process information needed for Firebase Authentication, Firestore, Cloud Functions, App Check and reCAPTCHA Enterprise, and Google Cloud text and photo screening. GitHub Pages serves the public app files. See <a href="https://firebase.google.com/support/privacy" target="_blank" rel="noopener noreferrer">Firebase privacy and security information</a> for more about Google's services.</p>
       <h2>Storage and retention</h2>
       <p>Private application records, including uploaded photos, are stored in Firestore. The installed app may cache public pages and other static files for offline fallback; it does not put private application records in that cache. No automatic expiration date is set for application records. You may contact us to ask about access, correction, or deletion. Service-provider logs or backups may follow their own retention practices.</p>
+      <p>Connected admins may disconnect Google Calendar after canceling their active calendar interviews. The app removes its saved calendar authorization when they disconnect. Google may retain calendar events and invitation emails according to the account's own settings and policies.</p>
       <h2>Your choices</h2>
       <p>You can return to update your profile, questionnaire answers while the questionnaire is available, and selected skills. The app limits changes to an existing photo set to once every 30 days. Contact us if you want help with your information or account. Visiting outside links, including our Facebook page, is subject to those sites' own privacy practices.</p>
       <h2>Changes and contact</h2>

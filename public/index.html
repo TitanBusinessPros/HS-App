@@ -59,7 +59,15 @@
         <span class="eyebrow">Interview invitation</span><h2 id="interview-heading"></h2>
         <p id="interview-time"></p><p id="interview-admin"></p><p id="interview-note" class="homestead-description" hidden></p>
         <a id="interview-meeting-link" class="secondary-button button-link" target="_blank" rel="noopener noreferrer" hidden>Open Zoom meeting</a>
-        <p class="muted">Reply in your private inbox to confirm the date and time or ask the admin questions.</p>
+        <p id="interview-help" class="muted">Reply in your private inbox to confirm the date and time or ask the admin questions.</p>
+      </section>
+      <section id="booking-section" class="card interview-notice" hidden>
+        <span class="eyebrow">Interview invitation</span><h2>Choose your interview time</h2>
+        <p id="booking-description"></p>
+        <p class="muted">Available times are checked against the admin's Google Calendar. You will receive a Google Calendar invitation after booking.</p>
+        <button id="refresh-booking-slots" class="secondary-button" type="button">Refresh available times</button>
+        <div id="booking-slots" class="booking-slots"></div>
+        <p id="booking-message" class="message" role="status"></p>
       </section>
       <div class="content-grid">
         <div class="card profile-card">

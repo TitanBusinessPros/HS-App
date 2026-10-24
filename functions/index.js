@@ -5,6 +5,7 @@ import { getFirestore, FieldValue, Timestamp } from 'firebase-admin/firestore';
 import vision from '@google-cloud/vision';
 import language from '@google-cloud/language';
 import { createHash } from 'node:crypto';
+import { createCalendarBooking } from './calendar-booking.js';
 
 initializeApp();
 const db = getFirestore();
@@ -277,7 +278,7 @@ export const sanitizeMyContacts = onCall({ ...options, timeoutSeconds: 120 }, as
   const [profile, conversation] = await Promise.all([profileRef.get(), conversationRef.get()]);
   if (!profile.exists && !conversation.exists) return { cleaned: true };
   const writer = db.bulkWriter();
-  if (profile.data()?.interview?.contactAdminEmail) {
+  if (profile.data()?.interview?.contactAdminEmail && profile.data().interview.source !== 'calendar') {
     writer.update(profileRef, { 'interview.contactAdminEmail': FieldValue.delete() });
   }
   if (conversation.exists && conversation.data().privacyVersion !== 1) {
@@ -332,6 +333,9 @@ export const manageApplicant = onCall(options, async request => {
       transaction.get(applicationStatsRef)
     ]);
     if (!admin.exists || targetAdmin.exists) throw new HttpsError('permission-denied', 'Admin access required.');
+    if (action === 'delete' && profile.data()?.interview?.source === 'calendar') {
+      throw new HttpsError('failed-precondition', 'Cancel the calendar interview before deleting this applicant.');
+    }
     const nextCount = action === 'delete' && profile.exists ?
       Math.max(0, (await applicantProfileCount(transaction, stats)) - 1) : null;
     const blocked = db.doc(`blockedUsers/${uid}`);
@@ -507,6 +511,9 @@ export const manageInterview = onCall(options, async request => {
     ]);
     if (!admin.exists) throw new HttpsError('permission-denied', 'Admin access required.');
     if (blocked.exists || !applicant.exists) throw new HttpsError('failed-precondition', 'This applicant is unavailable.');
+    if (applicant.data().interview?.source === 'calendar') {
+      throw new HttpsError('failed-precondition', 'Cancel the calendar interview before changing it.');
+    }
     if (action === 'cancel' && !applicant.data().interview) throw new HttpsError('failed-precondition', 'No interview is scheduled.');
     const conversation = db.doc(`conversations/${uid}`);
     const existing = await transaction.get(conversation);
@@ -520,7 +527,7 @@ export const manageInterview = onCall(options, async request => {
         interviewMode: FieldValue.delete(), interviewAt: FieldValue.delete()
       }, { merge: true });
     } else {
-      transaction.update(applicant.ref, { interview });
+      transaction.update(applicant.ref, { interview, bookingInvite: FieldValue.delete() });
       transaction.set(db.doc(`applicantSummaries/${uid}`), {
         interviewMode: interview.mode, interviewAt: interview.scheduledAt
       }, { merge: true });
@@ -710,3 +717,9 @@ export const deleteHomesteadPhoto = onCall(options, async request => {
   });
   return { deleted: true };
 });
+
+export const {
+  calendarStatus, saveCalendarIntegration, beginCalendarConnect, calendarOAuthCallback,
+  disconnectCalendar, saveCalendarAvailability, inviteToBook, revokeBookingInvite,
+  listInterviewSlots, bookInterviewSlot, cancelCalendarInterview
+} = createCalendarBooking({ db, caller, assertAdmin, assertMasterAdmin, checkText, options });

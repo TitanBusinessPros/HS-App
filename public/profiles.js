@@ -22,6 +22,14 @@ const addSkill = httpsCallable(functions, 'addSkill');
 const saveQuestionnaireConfig = httpsCallable(functions, 'saveQuestionnaireConfig');
 const listAdmins = httpsCallable(functions, 'listAdmins');
 const removeAdmin = httpsCallable(functions, 'removeAdmin');
+const calendarStatus = httpsCallable(functions, 'calendarStatus');
+const saveCalendarIntegration = httpsCallable(functions, 'saveCalendarIntegration');
+const beginCalendarConnect = httpsCallable(functions, 'beginCalendarConnect');
+const disconnectCalendar = httpsCallable(functions, 'disconnectCalendar');
+const saveCalendarAvailability = httpsCallable(functions, 'saveCalendarAvailability');
+const inviteToBook = httpsCallable(functions, 'inviteToBook');
+const revokeBookingInvite = httpsCallable(functions, 'revokeBookingInvite');
+const cancelCalendarInterview = httpsCallable(functions, 'cancelCalendarInterview');
 const masterAdminEmail = 'titanbusinesspros@gmail.com';
 const pageSize = 25;
 const nameCollator = new Intl.Collator(undefined, { sensitivity: 'base' });
@@ -31,6 +39,8 @@ let applicants = [];
 let blocked = new Map();
 let selectedUid = null;
 let selectedInterviewScheduled = false;
+let selectedInterviewSource = '';
+let calendarReady = false;
 let page = 0;
 let summariesUnsub = null;
 let blockedUnsub = null;
@@ -76,6 +86,7 @@ function cleanSelection() {
   profileUnsub = questionnaireUnsub = skillsUnsub = conversationUnsub = messagesUnsub = null;
   selectedUid = null;
   selectedInterviewScheduled = false;
+  selectedInterviewSource = '';
   selectedSkillData = null;
   photoPreview.hidden = true;
   $('detail-photos').replaceChildren();
@@ -261,6 +272,7 @@ function renderProfile(person) {
   $('save-review').disabled = blocked.has(selectedUid);
   $('admin-send').disabled = blocked.has(selectedUid);
   renderInterviewEditor(person.interview);
+  renderBookingInviteEditor(person.bookingInvite, person.interview);
 }
 
 function localDateTime(date) {
@@ -283,6 +295,7 @@ function toggleMeetingLink() {
 function renderInterviewEditor(interview) {
   const date = interview?.scheduledAt?.toDate?.();
   selectedInterviewScheduled = Boolean(date);
+  selectedInterviewSource = interview?.source || '';
   const timeZoneLabel = date ? interview.timeZoneLabel || readableTimeZone(date, interview.timeZone) : '';
   const scheduledTime = date ? new Intl.DateTimeFormat('en-US', {
     dateStyle: 'medium', timeStyle: 'short', timeZone: interview.timeZone || undefined
@@ -296,8 +309,61 @@ function renderInterviewEditor(interview) {
   $('interview-note-input').value = interview?.note || '';
   toggleMeetingLink();
   $('interview-link').value = interview?.meetingLink || '';
-  $('schedule-interview').disabled = blocked.has(selectedUid);
-  $('cancel-interview').disabled = blocked.has(selectedUid) || !date;
+  $('schedule-interview').disabled = blocked.has(selectedUid) || selectedInterviewSource === 'calendar';
+  $('cancel-interview').disabled = !date || (blocked.has(selectedUid) && selectedInterviewSource !== 'calendar');
+}
+
+function renderBookingInviteEditor(invite, interview) {
+  const open = invite?.status === 'open' && invite.expiresAt?.toMillis?.() > Date.now();
+  $('booking-invite-summary').textContent = open ?
+    `An invitation is open until ${invite.expiresAt.toDate().toLocaleDateString()}. ${invite.adminEmail || 'An admin'} is the contact.` :
+    calendarReady ? 'The applicant will choose from your available times and receive a Google Calendar invitation.' :
+      'Connect your calendar and save bookable hours above first.';
+  $('send-booking-invite').disabled = !calendarReady || blocked.has(selectedUid) || Boolean(interview?.scheduledAt);
+  $('revoke-booking-invite').hidden = !open;
+  $('revoke-booking-invite').disabled = blocked.has(selectedUid);
+}
+
+async function loadCalendarStatus(generation = authGeneration) {
+  try {
+    const { data } = await calendarStatus();
+    if (generation !== authGeneration) return;
+    calendarReady = Boolean(data.configured && data.connected && data.availability);
+    $('calendar-redirect-uri').textContent = data.callbackUrl;
+    $('calendar-connection-status').textContent = !data.configured ?
+      'The master admin needs to save Google OAuth credentials before calendars can connect.' :
+      data.connected ? `Connected to ${data.connectedEmail || 'Google Calendar'}.` : 'Your Google Calendar is not connected yet.';
+    $('connect-calendar').disabled = !data.configured;
+    $('connect-calendar').textContent = data.connected ? 'Reconnect my Google Calendar' : 'Connect my Google Calendar';
+    $('disconnect-calendar').hidden = !data.connected;
+    $('calendar-availability-form').hidden = !data.connected;
+    const saved = data.availability || {
+      days: [1, 2, 3, 4, 5], startTime: '09:00', endTime: '17:00', durationMinutes: 30,
+      bufferMinutes: 15, leadHours: 24, horizonDays: 14,
+      timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/Chicago', timeZoneLabel: ''
+    };
+    for (const day of document.querySelectorAll('input[name="calendar-day"]')) day.checked = saved.days.includes(Number(day.value));
+    $('calendar-start').value = saved.startTime;
+    $('calendar-end').value = saved.endTime;
+    $('calendar-duration').value = String(saved.durationMinutes);
+    $('calendar-buffer').value = String(saved.bufferMinutes);
+    $('calendar-lead').value = String(saved.leadHours);
+    $('calendar-horizon').value = String(saved.horizonDays);
+    $('calendar-time-zone').value = saved.timeZone;
+    $('calendar-zone-label').value = saved.timeZoneLabel || readableTimeZone(new Date(), saved.timeZone);
+    if (selectedUid && !$('admin-detail').hidden) {
+      $('send-booking-invite').disabled = !calendarReady || blocked.has(selectedUid) || selectedInterviewScheduled;
+    }
+    if (new URLSearchParams(location.search).get('calendar') === 'connected') {
+      status('calendar-status-message', 'Calendar connected. Save your bookable hours below.');
+      history.replaceState(null, '', location.pathname);
+    } else if (new URLSearchParams(location.search).get('calendar') === 'error') {
+      status('calendar-status-message', 'Google Calendar connection failed. Check the OAuth setup and try again.', true);
+      history.replaceState(null, '', location.pathname);
+    }
+  } catch (error) {
+    if (generation === authGeneration) status('calendar-status-message', error.message || 'Could not check Google Calendar.', true);
+  }
 }
 
 async function loadAdmins(generation) {
@@ -597,7 +663,9 @@ onAuthStateChanged(auth, async user => {
   const generation = ++authGeneration;
   cleanSubscriptions();
   isMasterAdmin = false;
+  calendarReady = false;
   $('admin-management').hidden = true;
+  $('calendar-master-setup').hidden = true;
   $('questionnaire-editor').hidden = true;
   $('add-skill-card').hidden = true;
   questionnaireDirty = false;
@@ -618,12 +686,14 @@ onAuthStateChanged(auth, async user => {
     if (generation !== authGeneration) return;
     isMasterAdmin = user.email?.toLowerCase() === masterAdminEmail;
     $('admin-management').hidden = !isMasterAdmin;
+    $('calendar-master-setup').hidden = !isMasterAdmin;
     $('questionnaire-editor').hidden = !isMasterAdmin;
     $('add-skill-card').hidden = !isMasterAdmin;
     if (isMasterAdmin) loadAdmins(generation);
     $('loading').hidden = true;
     $('access-message').hidden = true;
     $('profiles-view').hidden = false;
+    loadCalendarStatus(generation);
     if (isMasterAdmin) questionnaireConfigUnsub = onSnapshot(doc(db, 'questionnaireConfig', 'main'), snapshot => {
       if (generation !== authGeneration) return;
       const config = snapshot.data();
@@ -662,8 +732,10 @@ onAuthStateChanged(auth, async user => {
         $('block-applicant').textContent = blocked.has(selectedUid) ? 'Unblock account' : 'Block account';
         $('save-review').disabled = blocked.has(selectedUid);
         $('admin-send').disabled = blocked.has(selectedUid);
-        $('schedule-interview').disabled = blocked.has(selectedUid);
-        $('cancel-interview').disabled = blocked.has(selectedUid) || !selectedInterviewScheduled;
+        $('schedule-interview').disabled = blocked.has(selectedUid) || selectedInterviewSource === 'calendar';
+        $('cancel-interview').disabled = !selectedInterviewScheduled || (blocked.has(selectedUid) && selectedInterviewSource !== 'calendar');
+        $('send-booking-invite').disabled = !calendarReady || blocked.has(selectedUid) || selectedInterviewScheduled;
+        $('revoke-booking-invite').disabled = blocked.has(selectedUid);
       }
     }, error => status('page-message', error.message || 'Could not load blocked accounts.', true));
   } catch (error) {
@@ -672,6 +744,58 @@ onAuthStateChanged(auth, async user => {
 });
 
 $('sign-out').addEventListener('click', async () => { await signOut(auth); location.href = './'; });
+$('calendar-config-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  if (!isMasterAdmin) return;
+  const button = event.submitter || event.target.querySelector('button[type="submit"]');
+  button.disabled = true;
+  try {
+    await saveCalendarIntegration({ clientId: $('calendar-client-id').value.trim(), clientSecret: $('calendar-client-secret').value.trim() });
+    $('calendar-client-secret').value = '';
+    status('calendar-config-message', 'Google connection setup saved. Each admin can now connect a calendar.');
+    await loadCalendarStatus();
+  } catch (error) { status('calendar-config-message', error.message || 'Could not save Google setup.', true); }
+  finally { button.disabled = false; }
+});
+$('connect-calendar').addEventListener('click', async () => {
+  const button = $('connect-calendar');
+  button.disabled = true;
+  try {
+    const { data } = await beginCalendarConnect();
+    location.assign(data.url);
+  } catch (error) {
+    status('calendar-status-message', error.message || 'Could not open Google connection.', true);
+    button.disabled = false;
+  }
+});
+$('disconnect-calendar').addEventListener('click', async () => {
+  if (!confirm('Disconnect this Google Calendar? Cancel any booked interviews first.')) return;
+  const button = $('disconnect-calendar');
+  button.disabled = true;
+  try {
+    await disconnectCalendar();
+    status('calendar-status-message', 'Google Calendar disconnected.');
+    await loadCalendarStatus();
+  } catch (error) { status('calendar-status-message', error.message || 'Could not disconnect calendar.', true); }
+  finally { button.disabled = false; }
+});
+$('calendar-availability-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  const button = event.submitter || event.target.querySelector('button[type="submit"]');
+  button.disabled = true;
+  try {
+    await saveCalendarAvailability({
+      days: [...document.querySelectorAll('input[name="calendar-day"]:checked')].map(input => Number(input.value)),
+      startTime: $('calendar-start').value, endTime: $('calendar-end').value,
+      durationMinutes: Number($('calendar-duration').value), bufferMinutes: Number($('calendar-buffer').value),
+      leadHours: Number($('calendar-lead').value), horizonDays: Number($('calendar-horizon').value),
+      timeZone: $('calendar-time-zone').value.trim(), timeZoneLabel: $('calendar-zone-label').value.trim()
+    });
+    status('calendar-availability-message', 'Bookable hours saved. You can now invite applicants to choose a time.');
+    await loadCalendarStatus();
+  } catch (error) { status('calendar-availability-message', error.message || 'Could not save bookable hours.', true); }
+  finally { button.disabled = false; }
+});
 $('applicant-search').addEventListener('input', () => { page = 0; renderList(); });
 $('previous-page').addEventListener('click', () => { if (page > 0) { page--; renderList(); } });
 $('next-page').addEventListener('click', () => { if ((page + 1) * pageSize < filteredApplicants().length) { page++; renderList(); } });
@@ -679,6 +803,38 @@ $('rank-previous').addEventListener('click', () => { if (rankPage > 0) { rankPag
 $('rank-next').addEventListener('click', () => { if ((rankPage + 1) * pageSize < rankedApplicants().length) { rankPage++; renderRanking(); } });
 
 for (const radio of document.querySelectorAll('input[name="interview-mode"]')) radio.addEventListener('change', toggleMeetingLink);
+$('booking-invite-mode').addEventListener('change', () => {
+  $('booking-invite-link-row').hidden = $('booking-invite-mode').value !== 'zoom';
+  if ($('booking-invite-mode').value !== 'zoom') $('booking-invite-link').value = '';
+});
+$('send-booking-invite').addEventListener('click', async () => {
+  const uid = selectedUid;
+  if (!uid) return;
+  const button = $('send-booking-invite');
+  button.disabled = true;
+  try {
+    await inviteToBook({
+      uid, mode: $('booking-invite-mode').value,
+      meetingLink: $('booking-invite-mode').value === 'zoom' ? $('booking-invite-link').value.trim() : '',
+      note: $('booking-invite-note').value.trim()
+    });
+    if (selectedUid === uid) status('booking-invite-message', 'Invitation sent. The applicant can choose a time on their profile.');
+  } catch (error) {
+    if (selectedUid === uid) status('booking-invite-message', error.message || 'Could not send booking invitation.', true);
+  } finally { if (selectedUid === uid) button.disabled = !calendarReady || blocked.has(uid) || selectedInterviewScheduled; }
+});
+$('revoke-booking-invite').addEventListener('click', async () => {
+  const uid = selectedUid;
+  if (!uid) return;
+  const button = $('revoke-booking-invite');
+  button.disabled = true;
+  try {
+    await revokeBookingInvite({ uid });
+    if (selectedUid === uid) status('booking-invite-message', 'Booking invitation withdrawn.');
+  } catch (error) {
+    if (selectedUid === uid) status('booking-invite-message', error.message || 'Could not withdraw invitation.', true);
+  } finally { if (selectedUid === uid) button.disabled = blocked.has(uid); }
+});
 $('interview-date').addEventListener('change', () => {
   if ($('interview-zone-label').value.trim()) return;
   const date = new Date($('interview-date').value);
@@ -721,12 +877,13 @@ $('cancel-interview').addEventListener('click', async () => {
   const button = $('cancel-interview');
   button.disabled = true;
   try {
-    await manageInterview({ uid, action: 'cancel' });
+    if (selectedInterviewSource === 'calendar') await cancelCalendarInterview({ uid });
+    else await manageInterview({ uid, action: 'cancel' });
     if (selectedUid === uid) status('interview-message', 'Interview canceled. The applicant was notified in their inbox.');
   } catch (error) {
     if (selectedUid === uid) status('interview-message', error.message || 'Could not cancel the interview.', true);
   } finally {
-    if (selectedUid === uid) button.disabled = blocked.has(uid) || !selectedInterviewScheduled;
+    if (selectedUid === uid) button.disabled = !selectedInterviewScheduled || (blocked.has(uid) && selectedInterviewSource !== 'calendar');
   }
 });
 

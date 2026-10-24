@@ -1,10 +1,10 @@
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/13.1.0/firebase-app.js';
 import { getAuth, onAuthStateChanged, signOut } from 'https://www.gstatic.com/firebasejs/13.1.0/firebase-auth.js';
-import { getFirestore, doc, getDoc } from 'https://www.gstatic.com/firebasejs/13.1.0/firebase-firestore.js';
+import { getFirestore, doc, collection, getDoc, onSnapshot } from 'https://www.gstatic.com/firebasejs/13.1.0/firebase-firestore.js';
 import { initializeAppCheck, ReCaptchaEnterpriseProvider } from 'https://www.gstatic.com/firebasejs/13.1.0/firebase-app-check.js';
 import { getFunctions, httpsCallable } from 'https://www.gstatic.com/firebasejs/13.1.0/firebase-functions.js';
 import { firebaseConfig, appCheckSiteKey } from './firebase-config.js';
-import { skills, skillCategories } from './skills.js';
+import { buildSkillCatalog } from './skills.js';
 
 const $ = id => document.getElementById(id);
 const app = initializeApp(firebaseConfig);
@@ -13,6 +13,9 @@ const auth = getAuth(app);
 const db = getFirestore(app);
 const saveSkills = httpsCallable(getFunctions(app, 'us-west2'), 'saveSkills');
 const selected = new Map();
+let catalog = buildSkillCatalog();
+let catalogUnsub = null;
+let authGeneration = 0;
 
 function showAccess(message) {
   $('loading').hidden = true;
@@ -23,42 +26,43 @@ function showAccess(message) {
 
 function renderCatalog() {
   const term = $('skill-search').value.trim().toLowerCase();
-  const catalog = $('skill-catalog');
-  catalog.replaceChildren();
+  const list = $('skill-catalog');
+  list.replaceChildren();
   let shown = 0;
-  for (const category of skillCategories) {
-    const matching = skills.filter(skill => skill.category === category.name &&
+  for (const category of catalog.categories) {
+    const matching = catalog.skills.filter(skill => skill.category === category &&
       (`${skill.name} ${skill.category}`).toLowerCase().includes(term));
     if (!matching.length) continue;
     shown += matching.length;
     const heading = document.createElement('h3');
     heading.className = 'skill-category-heading';
-    heading.textContent = category.name;
+    heading.textContent = category;
     const grid = document.createElement('div');
     grid.className = 'skill-options';
     matching.forEach(skill => {
       const button = document.createElement('button');
       button.type = 'button';
-      button.className = `skill-option ${selected.has(skill.id) ? 'selected' : ''}`;
-      button.setAttribute('aria-pressed', String(selected.has(skill.id)));
+      button.className = `skill-option ${selected.has(String(skill.id)) ? 'selected' : ''}`;
+      button.setAttribute('aria-pressed', String(selected.has(String(skill.id))));
       button.textContent = skill.name;
       button.addEventListener('click', () => {
-        if (selected.has(skill.id)) selected.delete(skill.id);
-        else selected.set(skill.id, { id: skill.id, years: '', organization: '' });
+        const key = String(skill.id);
+        if (selected.has(key)) selected.delete(key);
+        else selected.set(key, { id: skill.id, years: '', organization: '' });
         renderCatalog();
         renderSelected();
       });
       grid.append(button);
     });
-    catalog.append(heading, grid);
+    list.append(heading, grid);
   }
   if (!shown) {
     const empty = document.createElement('p');
     empty.className = 'muted';
     empty.textContent = 'No matching skills.';
-    catalog.append(empty);
+    list.append(empty);
   }
-  $('selected-count').textContent = `${selected.size} of ${skills.length} skills selected`;
+  $('selected-count').textContent = `${selected.size} skills selected`;
 }
 
 function renderSelected() {
@@ -71,19 +75,19 @@ function renderSelected() {
     list.append(empty);
     return;
   }
-  [...selected.values()].sort((a, b) => a.id - b.id).forEach(entry => {
-    const skill = skills[entry.id];
+  [...selected.values()].sort((a, b) => String(a.id).localeCompare(String(b.id))).forEach(entry => {
+    const skill = catalog.byId.get(String(entry.id));
     const card = document.createElement('div');
     card.className = 'selected-skill';
     const heading = document.createElement('div');
     heading.className = 'section-heading';
     const title = document.createElement('h3');
-    title.textContent = skill.name;
+    title.textContent = skill?.name || 'Skill no longer available';
     const remove = document.createElement('button');
     remove.type = 'button';
     remove.className = 'text-button';
     remove.textContent = 'Remove';
-    remove.addEventListener('click', () => { selected.delete(entry.id); renderCatalog(); renderSelected(); });
+    remove.addEventListener('click', () => { selected.delete(String(entry.id)); renderCatalog(); renderSelected(); });
     heading.append(title, remove);
     const yearsLabel = document.createElement('label');
     yearsLabel.htmlFor = `skill-years-${entry.id}`;
@@ -114,6 +118,10 @@ function renderSelected() {
 }
 
 onAuthStateChanged(auth, async user => {
+  const generation = ++authGeneration;
+  if (catalogUnsub) catalogUnsub();
+  catalogUnsub = null;
+  selected.clear();
   $('account-email').textContent = user?.email || '';
   $('sign-out').hidden = !user;
   if (!user) return showAccess('Sign in with Google and save your applicant profile before adding skills.');
@@ -124,21 +132,28 @@ onAuthStateChanged(auth, async user => {
     if ((await getDoc(doc(db, 'admins', user.uid))).exists()) return showAccess('Admins do not need applicant skills.');
     if (!(await getDoc(doc(db, 'users', user.uid))).exists()) return showAccess('Save your applicant profile first, then return to add skills.');
     const saved = await getDoc(doc(db, 'skills', user.uid));
-    selected.clear();
+    if (generation !== authGeneration) return;
     if (saved.exists() && saved.data().version === 1) {
       for (const entry of saved.data().entries || []) {
-        if (Number.isInteger(entry.id) && entry.id >= 0 && entry.id < skills.length) {
-          selected.set(entry.id, { id: entry.id, years: String(entry.years), organization: entry.organization || '' });
+        if ((Number.isInteger(entry.id) && entry.id >= 0 && entry.id < 100) ||
+            (typeof entry.id === 'string' && /^custom_[a-f0-9]{32}$/.test(entry.id))) {
+          selected.set(String(entry.id), { id: entry.id, years: String(entry.years), organization: entry.organization || '' });
         }
       }
     }
-    renderCatalog();
-    renderSelected();
-    $('loading').hidden = true;
-    $('access-message').hidden = true;
-    $('skills-view').hidden = false;
+    catalogUnsub = onSnapshot(collection(db, 'skillCatalog'), snapshot => {
+      if (generation !== authGeneration) return;
+      catalog = buildSkillCatalog(snapshot.docs.map(item => ({ id: item.id, ...item.data() })));
+      renderCatalog();
+      renderSelected();
+      $('loading').hidden = true;
+      $('access-message').hidden = true;
+      $('skills-view').hidden = false;
+    }, error => {
+      if (generation === authGeneration) showAccess(`Could not load skills: ${error.message || 'Please try again.'}`);
+    });
   } catch (error) {
-    showAccess(`Could not open skills: ${error.message || 'Please try again.'}`);
+    if (generation === authGeneration) showAccess(`Could not open skills: ${error.message || 'Please try again.'}`);
   }
 });
 
@@ -147,7 +162,7 @@ $('skill-search').addEventListener('input', renderCatalog);
 
 $('skills-form').addEventListener('submit', async event => {
   event.preventDefault();
-  const entries = [...selected.values()].sort((a, b) => a.id - b.id).map(entry => ({
+  const entries = [...selected.values()].sort((a, b) => String(a.id).localeCompare(String(b.id))).map(entry => ({
     id: entry.id,
     years: entry.years === '' ? NaN : Number(entry.years),
     organization: entry.organization.trim()

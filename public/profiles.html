@@ -19,9 +19,20 @@
     <section id="profiles-view" hidden>
       <div class="page-intro"><span class="eyebrow">Admin workspace</span><h1>Applicant profiles</h1><p>Profiles are listed alphabetically. Select a person to load their full introduction, photos, skills, questionnaire, and private conversation.</p><a class="text-button" href="./">Back to admin home</a></div>
       <p id="page-message" class="message" role="status"></p>
+      <section class="card skill-ranking-card">
+        <h2>Add a homestead skill</h2>
+        <p class="muted">New skills appear in the applicant skill picker and the admin rankings.</p>
+        <form id="add-skill-form">
+          <label for="new-skill-name">Skill name</label><input id="new-skill-name" maxlength="80" required placeholder="For example, Mushroom Cultivation">
+          <label for="new-skill-category">Category</label><input id="new-skill-category" list="skill-categories" maxlength="50" required placeholder="Choose or enter a category">
+          <datalist id="skill-categories"></datalist>
+          <button id="add-skill" class="primary-button" type="submit">Add skill</button>
+          <p id="add-skill-message" class="message" role="status"></p>
+        </form>
+      </section>
       <section id="skill-rankings" class="card skill-ranking-card">
         <div class="section-heading"><h2>Rank applicants by skill</h2><span id="skill-rank-count" class="count">0</span></div>
-        <p class="muted">Choose one of 100 skills. Applicants with the most reported years appear first. Organization details are supplied by applicants and should be checked with them.</p>
+        <p class="muted">Choose a skill. Applicants with the most reported years appear first. Organization details are supplied by applicants and should be checked with them.</p>
         <label for="rank-skill">Choose a skill</label><select id="rank-skill"><option value="">Choose a skill</option></select>
         <div id="rank-list" class="rank-list"></div>
         <p id="rank-empty" class="muted">Choose a skill to see its ranking.</p>

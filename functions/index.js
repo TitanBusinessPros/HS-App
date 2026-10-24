@@ -4,6 +4,7 @@ import { getAuth } from 'firebase-admin/auth';
 import { getFirestore, FieldValue, Timestamp } from 'firebase-admin/firestore';
 import vision from '@google-cloud/vision';
 import language from '@google-cloud/language';
+import { createHash } from 'node:crypto';
 
 initializeApp();
 const db = getFirestore();
@@ -14,6 +15,12 @@ const options = { region: 'us-west2', enforceAppCheck: true, maxInstances: 10, m
 const photoPattern = /^data:image\/jpeg;base64,([A-Za-z0-9+/]+={0,2})$/;
 const monthMs = 30 * 24 * 60 * 60 * 1000;
 const reviewStatuses = new Set(['submitted', 'reviewing', 'good-fit', 'declined']);
+const customSkillPattern = /^custom_[a-f0-9]{32}$/;
+
+function validSkillId(id) {
+  return (Number.isInteger(id) && id >= 0 && id < 100) ||
+    (typeof id === 'string' && customSkillPattern.test(id));
+}
 
 function caller(request) {
   const user = request.auth;
@@ -208,7 +215,7 @@ export const manageApplicant = onCall(options, async request => {
         transaction.delete(db.doc(`questionnaires/${uid}`));
         transaction.delete(db.doc(`skills/${uid}`));
         for (const entry of skillRecord.data()?.entries || []) {
-          if (Number.isInteger(entry.id) && entry.id >= 0 && entry.id < 100) {
+          if (validSkillId(entry.id)) {
             transaction.delete(db.doc(`skillRankings/${entry.id}/applicants/${uid}`));
           }
         }
@@ -257,21 +264,45 @@ export const saveQuestionnaire = onCall(options, async request => {
   return { saved: true };
 });
 
-export const saveSkills = onCall(options, async request => {
+export const addSkill = onCall(options, async request => {
+  const user = caller(request);
+  const name = typeof request.data?.name === 'string' ? request.data.name.trim().replace(/\s+/g, ' ') : '';
+  const category = typeof request.data?.category === 'string' ? request.data.category.trim().replace(/\s+/g, ' ') : '';
+  if (name.length < 2 || name.length > 80 || category.length < 2 || category.length > 50 ||
+      /[\/\\]/.test(name + category)) invalid('Enter a skill and a category.');
+  const [blocked, admin] = await Promise.all([
+    db.doc(`blockedUsers/${user.uid}`).get(), db.doc(`admins/${user.uid}`).get()
+  ]);
+  if (blocked.exists || !admin.exists) throw new HttpsError('permission-denied', 'Admin access required.');
+  await checkText(`${category}\n${name}`);
+  const key = `${category.toLocaleLowerCase('en-US')}|${name.toLocaleLowerCase('en-US')}`;
+  const id = `custom_${createHash('sha256').update(key).digest('hex').slice(0, 32)}`;
+  try {
+    await db.doc(`skillCatalog/${id}`).create({ name, category, addedBy: user.uid, addedAt: FieldValue.serverTimestamp() });
+  } catch (error) {
+    if (error.code === 6 || error.code === 'already-exists') {
+      throw new HttpsError('already-exists', 'This skill is already in that category.');
+    }
+    throw error;
+  }
+  return { id };
+});
+
+export const saveSkills = onCall({ ...options, timeoutSeconds: 120 }, async request => {
   const user = caller(request);
   const raw = request.data?.entries;
-  if (!Array.isArray(raw) || raw.length > 100) invalid('Choose up to 100 homestead skills.');
+  if (!Array.isArray(raw) || raw.length > 200) invalid('Too many skills were selected.');
   const seen = new Set();
   const entries = raw.map(item => {
     const id = item?.id;
     const years = item?.years;
     const organization = typeof item?.organization === 'string' ? item.organization.trim() : '';
-    if (!Number.isInteger(id) || id < 0 || id >= 100 || seen.has(id) ||
+    if (!validSkillId(id) || seen.has(String(id)) ||
         typeof years !== 'number' || !Number.isFinite(years) || years < 0 || years > 80 ||
         !Number.isInteger(years * 2) || organization.length < 2 || organization.length > 120) {
       invalid('Add valid years and a company, organization, or homestead for each selected skill.');
     }
-    seen.add(id);
+    seen.add(String(id));
     return { id, years, organization };
   });
   for (let index = 0; index < entries.length; index += 10) {
@@ -282,15 +313,18 @@ export const saveSkills = onCall(options, async request => {
   await db.runTransaction(async transaction => {
     await assertActive(transaction, user.uid);
     const skillDoc = db.doc(`skills/${user.uid}`);
-    const [admin, profile, previous] = await Promise.all([
+    const customIds = entries.filter(entry => typeof entry.id === 'string').map(entry => entry.id);
+    const [admin, profile, previous, ...customSkills] = await Promise.all([
       transaction.get(db.doc(`admins/${user.uid}`)),
       transaction.get(db.doc(`users/${user.uid}`)),
-      transaction.get(skillDoc)
+      transaction.get(skillDoc),
+      ...customIds.map(id => transaction.get(db.doc(`skillCatalog/${id}`)))
     ]);
     if (admin.exists || !profile.exists) throw new HttpsError('failed-precondition', 'Save your applicant profile before adding skills.');
-    const currentIds = new Set(entries.map(entry => entry.id));
+    if (customSkills.some(snapshot => !snapshot.exists)) invalid('A selected skill is no longer available. Refresh and try again.');
+    const currentIds = new Set(entries.map(entry => String(entry.id)));
     for (const old of previous.data()?.entries || []) {
-      if (Number.isInteger(old.id) && old.id >= 0 && old.id < 100 && !currentIds.has(old.id)) {
+      if (validSkillId(old.id) && !currentIds.has(String(old.id))) {
         transaction.delete(db.doc(`skillRankings/${old.id}/applicants/${user.uid}`));
       }
     }

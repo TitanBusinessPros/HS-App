@@ -1,4 +1,4 @@
-// Version 1: keep category and skill order stable. Saved entries use these numeric IDs.
+// Keep these built-in IDs and their order stable. Saved entries use them.
 export const skillCategories = [
   { name: 'Poultry', skills: [
     'Chicken Farmer', 'Duck Keeping', 'Goose Keeping', 'Turkey Raising', 'Quail Raising',
@@ -45,3 +45,22 @@ export const skillCategories = [
 export const skills = skillCategories.flatMap(category =>
   category.skills.map(name => ({ category: category.name, name }))
 ).map((skill, id) => ({ ...skill, id }));
+
+export function buildSkillCatalog(customSkills = []) {
+  const categories = skillCategories.map(category => category.name);
+  const byCategory = new Map(categories.map(name => [name.toLowerCase(), name]));
+  const all = [...skills];
+  const sorted = [...customSkills].sort((a, b) =>
+    String(a.category).localeCompare(String(b.category)) || String(a.name).localeCompare(String(b.name)));
+  for (const skill of sorted) {
+    if (typeof skill.id !== 'string' || typeof skill.name !== 'string' || typeof skill.category !== 'string') continue;
+    const key = skill.category.toLowerCase();
+    if (!byCategory.has(key)) {
+      byCategory.set(key, skill.category);
+      categories.push(skill.category);
+    }
+    all.push({ ...skill, category: byCategory.get(key) });
+  }
+  const byId = new Map(all.map(skill => [String(skill.id), skill]));
+  return { skills: all, categories, byId };
+}

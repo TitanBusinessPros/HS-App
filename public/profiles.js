@@ -5,7 +5,7 @@ import { initializeAppCheck, ReCaptchaEnterpriseProvider } from 'https://www.gst
 import { getFunctions, httpsCallable } from 'https://www.gstatic.com/firebasejs/13.1.0/firebase-functions.js';
 import { firebaseConfig, appCheckSiteKey } from './firebase-config.js';
 import { questions } from './questions.js';
-import { skills, skillCategories } from './skills.js';
+import { buildSkillCatalog } from './skills.js';
 
 const $ = id => document.getElementById(id);
 const app = initializeApp(firebaseConfig);
@@ -16,6 +16,7 @@ const functions = getFunctions(app, 'us-west2');
 const sendMessage = httpsCallable(functions, 'sendMessage');
 const setReviewStatus = httpsCallable(functions, 'setReviewStatus');
 const manageApplicant = httpsCallable(functions, 'manageApplicant');
+const addSkill = httpsCallable(functions, 'addSkill');
 const pageSize = 25;
 const nameCollator = new Intl.Collator(undefined, { sensitivity: 'base' });
 let currentUser = null;
@@ -31,6 +32,9 @@ let skillsUnsub = null;
 let conversationUnsub = null;
 let messagesUnsub = null;
 let rankingsUnsub = null;
+let catalogUnsub = null;
+let catalog = buildSkillCatalog();
+let selectedSkillData = null;
 let rankings = [];
 let rankPage = 0;
 let authGeneration = 0;
@@ -58,6 +62,7 @@ function cleanSelection() {
   for (const unsub of [profileUnsub, questionnaireUnsub, skillsUnsub, conversationUnsub, messagesUnsub]) if (unsub) unsub();
   profileUnsub = questionnaireUnsub = skillsUnsub = conversationUnsub = messagesUnsub = null;
   selectedUid = null;
+  selectedSkillData = null;
   photoPreview.hidden = true;
   $('detail-photos').replaceChildren();
   $('admin-messages').replaceChildren();
@@ -67,8 +72,8 @@ function cleanSelection() {
 
 function cleanSubscriptions() {
   cleanSelection();
-  for (const unsub of [summariesUnsub, blockedUnsub, rankingsUnsub]) if (unsub) unsub();
-  summariesUnsub = blockedUnsub = rankingsUnsub = null;
+  for (const unsub of [summariesUnsub, blockedUnsub, rankingsUnsub, catalogUnsub]) if (unsub) unsub();
+  summariesUnsub = blockedUnsub = rankingsUnsub = catalogUnsub = null;
   rankings = [];
 }
 
@@ -250,9 +255,10 @@ function renderApplicantSkills(data) {
   $('applicant-skills-summary').textContent = entries.length ? `Skills: ${entries.length} selected` : 'Skills: none added';
   const list = $('applicant-skills-list');
   list.replaceChildren();
-  [...entries].sort((a, b) => b.years - a.years || nameCollator.compare(skills[a.id]?.name || '', skills[b.id]?.name || ''))
+  [...entries].sort((a, b) => b.years - a.years ||
+    nameCollator.compare(catalog.byId.get(String(a.id))?.name || '', catalog.byId.get(String(b.id))?.name || ''))
     .forEach(entry => {
-      const skill = skills[entry.id];
+      const skill = catalog.byId.get(String(entry.id));
       if (!skill) return;
       const row = document.createElement('div');
       row.className = 'questionnaire-answer';
@@ -303,7 +309,10 @@ function selectApplicant(uid) {
     if (selectedUid === selected) renderQuestionnaire(snapshot.exists() ? snapshot.data() : null);
   }, error => status('page-message', error.message || 'Could not load questionnaire.', true));
   skillsUnsub = onSnapshot(doc(db, 'skills', uid), snapshot => {
-    if (selectedUid === selected) renderApplicantSkills(snapshot.exists() ? snapshot.data() : null);
+    if (selectedUid === selected) {
+      selectedSkillData = snapshot.exists() ? snapshot.data() : null;
+      renderApplicantSkills(selectedSkillData);
+    }
   }, error => status('page-message', error.message || 'Could not load skills.', true));
   conversationUnsub = onSnapshot(doc(db, 'conversations', uid), snapshot => {
     if (selectedUid !== selected) return;
@@ -319,17 +328,35 @@ function selectApplicant(uid) {
   }, error => status('admin-message-status', error.message || 'Could not load conversation.', true));
 }
 
-for (const category of skillCategories) {
-  const group = document.createElement('optgroup');
-  group.label = category.name;
-  skills.filter(skill => skill.category === category.name).forEach(skill => {
-    const option = document.createElement('option');
-    option.value = String(skill.id);
-    option.textContent = skill.name;
-    group.append(option);
-  });
-  $('rank-skill').append(group);
+function renderSkillCatalog() {
+  const selectedSkill = $('rank-skill').value;
+  $('rank-skill').replaceChildren(new Option('Choose a skill', ''));
+  $('skill-categories').replaceChildren();
+  for (const category of catalog.categories) {
+    const categoryOption = document.createElement('option');
+    categoryOption.value = category;
+    $('skill-categories').append(categoryOption);
+    const group = document.createElement('optgroup');
+    group.label = category;
+    catalog.skills.filter(skill => skill.category === category).forEach(skill => {
+      const option = document.createElement('option');
+      option.value = String(skill.id);
+      option.textContent = skill.name;
+      group.append(option);
+    });
+    $('rank-skill').append(group);
+  }
+  $('rank-skill').value = catalog.byId.has(selectedSkill) ? selectedSkill : '';
+  if (selectedSkill && !$('rank-skill').value) {
+    if (rankingsUnsub) rankingsUnsub();
+    rankingsUnsub = null;
+    rankings = [];
+    renderRanking();
+  }
+  if (selectedUid) renderApplicantSkills(selectedSkillData);
 }
+
+renderSkillCatalog();
 
 $('rank-skill').addEventListener('change', () => {
   if (rankingsUnsub) rankingsUnsub();
@@ -365,6 +392,11 @@ onAuthStateChanged(auth, async user => {
     $('loading').hidden = true;
     $('access-message').hidden = true;
     $('profiles-view').hidden = false;
+    catalogUnsub = onSnapshot(collection(db, 'skillCatalog'), snapshot => {
+      if (generation !== authGeneration) return;
+      catalog = buildSkillCatalog(snapshot.docs.map(item => ({ id: item.id, ...item.data() })));
+      renderSkillCatalog();
+    }, error => status('page-message', error.message || 'Could not load skill catalog.', true));
     summariesUnsub = onSnapshot(collection(db, 'applicantSummaries'), snapshot => {
       applicants = snapshot.docs.map(item => ({ uid: item.id, ...item.data() }))
         .sort((a, b) => nameCollator.compare(a.name || '', b.name || '') || nameCollator.compare(a.email || '', b.email || ''));
@@ -395,6 +427,28 @@ $('previous-page').addEventListener('click', () => { if (page > 0) { page--; ren
 $('next-page').addEventListener('click', () => { if ((page + 1) * pageSize < filteredApplicants().length) { page++; renderList(); } });
 $('rank-previous').addEventListener('click', () => { if (rankPage > 0) { rankPage--; renderRanking(); } });
 $('rank-next').addEventListener('click', () => { if ((rankPage + 1) * pageSize < rankedApplicants().length) { rankPage++; renderRanking(); } });
+
+$('add-skill-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  const button = $('add-skill');
+  const name = $('new-skill-name').value.trim();
+  const category = $('new-skill-category').value.trim();
+  if (catalog.skills.some(skill => skill.name.toLowerCase() === name.toLowerCase() &&
+      skill.category.toLowerCase() === category.toLowerCase())) {
+    status('add-skill-message', 'This skill is already in that category.', true);
+    return;
+  }
+  button.disabled = true;
+  try {
+    await addSkill({ name, category });
+    $('new-skill-name').value = '';
+    status('add-skill-message', 'Skill added to the applicant picker and rankings.');
+  } catch (error) {
+    status('add-skill-message', error.message || 'Could not add skill.', true);
+  } finally {
+    button.disabled = false;
+  }
+});
 
 $('save-review').addEventListener('click', async () => {
   if (!selectedUid) return;

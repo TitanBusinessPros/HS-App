@@ -2,20 +2,12 @@
   const installButton = document.getElementById("install-app");
   const updateButton = document.getElementById("update-app");
   const status = document.getElementById("pwa-status");
-  const versionKey = "homesteader-installed-version";
+  const currentVersion = document.querySelector('meta[name="app-version"]')?.content;
   let installPrompt;
 
   function showStatus(message) {
     status.textContent = message;
     status.hidden = false;
-  }
-
-  function storedVersion() {
-    try { return localStorage.getItem(versionKey); } catch { return null; }
-  }
-
-  function saveVersion(version) {
-    try { localStorage.setItem(versionKey, version); } catch { /* Storage can be disabled. */ }
   }
 
   async function latestVersion() {
@@ -31,14 +23,8 @@
   async function checkForUpdates() {
     try {
       const version = await latestVersion();
-      const previous = storedVersion();
-      if (previous && previous !== version) {
-        updateButton.classList.add("update-available");
-        updateButton.textContent = "Update available";
-      } else if (!previous) {
-        saveVersion(version);
-      }
-    } catch { /* The update button will explain connectivity errors on click. */ }
+      updateButton.hidden = !currentVersion || currentVersion === version;
+    } catch { /* Keep the button hidden until a newer published version is confirmed. */ }
   }
 
   window.addEventListener("beforeinstallprompt", (event) => {
@@ -83,7 +69,6 @@
           }
         }
       }
-      saveVersion(version);
       showStatus("Opening the current version...");
       const destination = new URL(location.href);
       destination.searchParams.set("appVersion", version.slice(0, 12));
@@ -104,4 +89,5 @@
   document.addEventListener("visibilitychange", () => {
     if (!document.hidden) checkForUpdates();
   });
+  setInterval(() => { if (!document.hidden) checkForUpdates(); }, 5 * 60 * 1000);
 })();

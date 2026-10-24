@@ -99,3 +99,7 @@
 .admin-row span{font-size:.78rem;color:#627567}
 .admin-row .danger-button{flex:none}
 @media(max-width:520px){.admin-row{align-items:flex-start;flex-direction:column}}
+.brand-logo{display:block;width:62px;height:62px;object-fit:contain}
+#admin-view{text-align:center}
+#admin-view .button-link{margin:8px 5px 0}
+@media(max-width:700px){.brand-logo{width:54px;height:54px}}

@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#234837">
+  <meta name="app-version" content="local">
   <meta name="description" content="A private place to introduce yourself to the Homesteader team.">
   <title>Homesteader</title>
   <link rel="icon" href="favicon.ico" sizes="any">
@@ -14,9 +15,9 @@
 </head>
 <body>
   <header class="site-header">
-    <a class="brand" href="./" aria-label="Homesteader home"><span class="brand-mark">H</span><span>Homesteader</span></a>
+    <a class="brand" href="./" aria-label="Homesteader home"><img class="brand-logo" src="icons/favicon-96x96.png" alt="" width="62" height="62"></a>
     <div class="header-actions">
-      <div class="pwa-actions"><button id="install-app" class="pwa-button" type="button">Install app</button><button id="update-app" class="pwa-button" type="button">Update app</button></div>
+      <div class="pwa-actions"><button id="install-app" class="pwa-button" type="button">Install app</button><button id="update-app" class="pwa-button update-available" type="button" hidden>Update available</button></div>
       <span id="account-email" class="account-email" hidden></span>
       <button id="sign-out" type="button" class="text-button" hidden>Sign out</button>
     </div>

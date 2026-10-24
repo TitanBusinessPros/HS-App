@@ -1042,6 +1042,10 @@ $('calendar-block-form').addEventListener('submit', async event => {
   if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime()) || end <= start) {
     return status('calendar-block-message', 'Choose a valid start and end time.', true);
   }
+  if (start < new Date() || start.getTime() > Date.now() + 90 * 24 * 60 * 60 * 1000 ||
+      end.getTime() - start.getTime() > 90 * 24 * 60 * 60 * 1000) {
+    return status('calendar-block-message', 'Choose a block starting within the next 90 days and lasting no more than 90 days.', true);
+  }
   button.disabled = true;
   try {
     await addCalendarBlock({ start: start.toISOString(), end: end.toISOString() });

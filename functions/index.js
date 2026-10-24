@@ -5,7 +5,7 @@ import { getFirestore, FieldValue, Timestamp } from 'firebase-admin/firestore';
 import vision from '@google-cloud/vision';
 import language from '@google-cloud/language';
 import { createHash } from 'node:crypto';
-import { createCalendarBooking, bookingLockRefs } from './calendar-booking.js';
+import { createCalendarBooking, bookingLockRefs, calendarRevisionRef, intervalsOverlap } from './calendar-booking.js';
 
 initializeApp();
 const db = getFirestore();
@@ -593,10 +593,12 @@ export const manageInterview = onCall(options, async request => {
   }
   await db.runTransaction(async transaction => {
     await assertActive(transaction, user.uid);
+    const revisionRef = calendarRevisionRef(db, user.uid);
     const [admin, blocked, applicant] = await Promise.all([
       transaction.get(db.doc(`admins/${user.uid}`)),
       transaction.get(db.doc(`blockedUsers/${uid}`)),
-      transaction.get(db.doc(`users/${uid}`))
+      transaction.get(db.doc(`users/${uid}`)),
+      transaction.get(revisionRef)
     ]);
     if (!admin.exists) throw new HttpsError('permission-denied', 'Admin access required.');
     if (blocked.exists || !applicant.exists) throw new HttpsError('failed-precondition', 'This applicant is unavailable.');
@@ -611,6 +613,11 @@ export const manageInterview = onCall(options, async request => {
     const allRefs = [...new Map([...previousRefs, ...reservationRefs].map(ref => [ref.path, ref])).values()];
     const locks = await Promise.all(allRefs.map(ref => transaction.get(ref)));
     if (action === 'schedule') {
+      const blockedPeriods = await transaction.get(db.collection(`calendarBlocks/${user.uid}/items`));
+      if (blockedPeriods.docs.some(block => intervalsOverlap(
+        interview.scheduledAt.toMillis(), reservationEndMs + reservationBufferMs,
+        block.data().start?.toMillis?.(), block.data().end?.toMillis?.()
+      ))) throw new HttpsError('failed-precondition', 'A blocked time overlaps that interview.');
       const otherInterviews = await transaction.get(db.collection('users')
         .where('interview.contactAdminUid', '==', user.uid).select('interview'));
       const startMs = interview.scheduledAt.toMillis();
@@ -656,6 +663,7 @@ export const manageInterview = onCall(options, async request => {
     });
     else transaction.update(conversation, { contactAdminUid: user.uid, contactAdminEmail: FieldValue.delete() });
     transaction.create(message, { senderUid: user.uid, senderRole: 'admin', text: invitation, createdAt: FieldValue.serverTimestamp() });
+    transaction.set(revisionRef, { revision: FieldValue.increment(1) }, { merge: true });
   });
   return { saved: true };
 });

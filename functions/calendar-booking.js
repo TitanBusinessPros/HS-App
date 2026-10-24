@@ -5,12 +5,22 @@ import { randomBytes } from 'node:crypto';
 const weekDays = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const minuteMs = 60_000;
 const quarterHour = 15 * minuteMs;
+const dayMs = 24 * 60 * minuteMs;
 
 function invalid(message) { throw new HttpsError('invalid-argument', message); }
 function unavailable(message) { throw new HttpsError('failed-precondition', message); }
 function availabilityRef(db, uid) { return db.doc(`adminAvailability/${uid}`); }
 function blocksCollection(db, uid) { return db.collection(`calendarBlocks/${uid}/items`); }
+export function calendarRevisionRef(db, uid) { return db.doc(`calendarRevisions/${uid}`); }
 function lockRef(db, uid, bucket) { return db.doc(`calendarSlotLocks/${uid}_${bucket}`); }
+export function intervalsOverlap(firstStart, firstEnd, secondStart, secondEnd) {
+  return firstStart < secondEnd && firstEnd > secondStart;
+}
+export function validBlockRange(start, end, now = Date.now()) {
+  return Number.isFinite(start) && Number.isFinite(end) && start % quarterHour === 0 &&
+    end % quarterHour === 0 && start >= now && end > start &&
+    end - start <= 90 * dayMs && start <= now + 90 * dayMs;
+}
 export function bookingLockRefs(db, uid, start, end) {
   const refs = [];
   for (let bucket = Math.floor(start / quarterHour) * quarterHour;
@@ -94,6 +104,9 @@ function activeInvite(profile) {
 export function createCalendarBooking({ db, caller, assertAdmin, checkText, options }) {
   async function calendarData(adminUid) {
     await assertAdmin(adminUid);
+    // Read the revision before the data so a concurrent calendar edit causes
+    // the later transaction to reject a stale view of the schedule.
+    const revision = (await calendarRevisionRef(db, adminUid).get()).data()?.revision || 0;
     const [settings, blocks, interviews] = await Promise.all([
       availabilityRef(db, adminUid).get(), blocksCollection(db, adminUid).get(),
       db.collection('users').where('interview.contactAdminUid', '==', adminUid)
@@ -104,7 +117,7 @@ export function createCalendarBooking({ db, caller, assertAdmin, checkText, opti
       .filter(block => block.end?.toMillis?.() > Date.now());
     const upcomingInterviews = interviews.docs.map(doc => ({ uid: doc.id, name: doc.data().profile?.name || 'Applicant', ...doc.data().interview }))
       .filter(item => item.scheduledAt?.toMillis?.() > Date.now());
-    return { availability, blocks: upcomingBlocks, interviews: upcomingInterviews };
+    return { availability, blocks: upcomingBlocks, interviews: upcomingInterviews, revision };
   }
   async function availableSlots(adminUid, now = Date.now()) {
     const data = await calendarData(adminUid);
@@ -117,7 +130,7 @@ export function createCalendarBooking({ db, caller, assertAdmin, checkText, opti
           (interview.durationMinutes || 60) * minuteMs)
       }))
     ];
-    return { availability: data.availability, slots: generateSlots(data.availability, busy, now) };
+    return { availability: data.availability, slots: generateSlots(data.availability, busy, now), revision: data.revision };
   }
 
   const calendarStatus = onCall(options, async request => {
@@ -143,28 +156,28 @@ export function createCalendarBooking({ db, caller, assertAdmin, checkText, opti
 
   const addCalendarBlock = onCall(options, async request => {
     const user = caller(request);
-    await assertAdmin(user.uid);
     const start = Date.parse(request.data?.start);
     const end = Date.parse(request.data?.end);
-    if (!Number.isFinite(start) || !Number.isFinite(end) || start % quarterHour || end % quarterHour ||
-        start < Date.now() || end <= start || end - start > 8 * 60 * minuteMs ||
-        start > Date.now() + 90 * 24 * 60 * minuteMs) invalid('Choose a future start and end time, up to eight hours apart.');
+    if (!validBlockRange(start, end)) invalid('Choose a future start and end time, up to 90 days apart.');
     const current = await calendarData(user.uid);
+    if (current.blocks.some(block => intervalsOverlap(start, end, block.start.toMillis(), block.end.toMillis()))) {
+      unavailable('Another blocked period overlaps that time.');
+    }
     if (current.interviews.some(item => {
       const scheduled = item.scheduledAt.toMillis();
       const finish = scheduled + (item.durationMinutes || 60) * minuteMs;
-      return scheduled < end && finish > start;
+      return intervalsOverlap(start, end, scheduled, finish);
     })) unavailable('A scheduled interview overlaps that blocked time.');
     const id = randomBytes(16).toString('hex');
     const ref = blocksCollection(db, user.uid).doc(id);
-    const refs = bookingLockRefs(db, user.uid, start, end);
+    const revisionRef = calendarRevisionRef(db, user.uid);
     await db.runTransaction(async transaction => {
-      const locks = await Promise.all(refs.map(item => transaction.get(item)));
-      if (locks.some(lock => lock.exists && lock.data().expiresAt?.toMillis?.() > Date.now())) {
-        unavailable('An interview or another block overlaps that time.');
+      const revision = await transaction.get(revisionRef);
+      if ((revision.data()?.revision || 0) !== current.revision) {
+        unavailable('The calendar changed. Refresh and try blocking this time again.');
       }
-      transaction.create(ref, { start: Timestamp.fromMillis(start), end: Timestamp.fromMillis(end), createdAt: FieldValue.serverTimestamp() });
-      refs.forEach(item => transaction.set(item, { adminUid: user.uid, blockId: id, expiresAt: Timestamp.fromMillis(end) }));
+      transaction.create(ref, { start: Timestamp.fromMillis(start), end: Timestamp.fromMillis(end), lockType: 'interval', createdAt: FieldValue.serverTimestamp() });
+      transaction.set(revisionRef, { revision: FieldValue.increment(1) }, { merge: true });
     });
     return { added: true };
   });
@@ -175,15 +188,18 @@ export function createCalendarBooking({ db, caller, assertAdmin, checkText, opti
     const id = request.data?.id;
     if (typeof id !== 'string' || !/^[a-f0-9]{32}$/.test(id)) invalid('Choose a blocked time.');
     const ref = blocksCollection(db, user.uid).doc(id);
+    const revisionRef = calendarRevisionRef(db, user.uid);
     await db.runTransaction(async transaction => {
-      const block = await transaction.get(ref);
+      const [block] = await Promise.all([transaction.get(ref), transaction.get(revisionRef)]);
       if (!block.exists) unavailable('This blocked time was already removed.');
-      const refs = bookingLockRefs(db, user.uid, block.data().start.toMillis(), block.data().end.toMillis());
+      const refs = block.data().lockType === 'interval' ? [] :
+        bookingLockRefs(db, user.uid, block.data().start.toMillis(), block.data().end.toMillis());
       const locks = await Promise.all(refs.map(item => transaction.get(item)));
       transaction.delete(ref);
       locks.forEach((lock, index) => {
         if (lock.data()?.blockId === id) transaction.delete(refs[index]);
       });
+      transaction.set(revisionRef, { revision: FieldValue.increment(1) }, { merge: true });
     });
     return { removed: true };
   });
@@ -273,12 +289,13 @@ export function createCalendarBooking({ db, caller, assertAdmin, checkText, opti
     if (!result.slots.includes(start)) unavailable('That time is no longer available. Choose another.');
     const endMs = startMs + result.availability.durationMinutes * minuteMs;
     const refs = bookingLockRefs(db, invite.adminUid, startMs, endMs + result.availability.bufferMinutes * minuteMs);
+    const revisionRef = calendarRevisionRef(db, invite.adminUid);
     await db.runTransaction(async transaction => {
       const conversationRef = db.doc(`conversations/${user.uid}`);
-      const [current, adminDoc, settings, currentBlock, conversation, ...locks] = await Promise.all([
+      const [current, adminDoc, settings, currentBlock, conversation, revision, ...locks] = await Promise.all([
         transaction.get(profileRef), transaction.get(db.doc(`admins/${invite.adminUid}`)),
         transaction.get(availabilityRef(db, invite.adminUid)), transaction.get(db.doc(`blockedUsers/${user.uid}`)),
-        transaction.get(conversationRef), ...refs.map(ref => transaction.get(ref))
+        transaction.get(conversationRef), transaction.get(revisionRef), ...refs.map(ref => transaction.get(ref))
       ]);
       if (!adminDoc.exists || currentBlock.exists) unavailable('This booking is unavailable.');
       const latestInvite = activeInvite(current.data());
@@ -286,6 +303,9 @@ export function createCalendarBooking({ db, caller, assertAdmin, checkText, opti
           latestInvite.createdAt.toMillis() !== invite.createdAt.toMillis()) unavailable('The invitation changed. Refresh and try again.');
       if (JSON.stringify(settings.data()?.availability) !== JSON.stringify(result.availability)) {
         unavailable('The admin changed their bookable hours. Refresh and choose a time.');
+      }
+      if ((revision.data()?.revision || 0) !== result.revision) {
+        unavailable('The admin calendar changed. Refresh and choose a time.');
       }
       if (locks.some(lock => lock.exists && lock.data().expiresAt?.toMillis?.() > Date.now())) {
         unavailable('That time was just booked. Choose another.');
@@ -306,6 +326,7 @@ export function createCalendarBooking({ db, caller, assertAdmin, checkText, opti
         adminUid: invite.adminUid, applicantUid: user.uid,
         expiresAt: Timestamp.fromMillis(endMs + result.availability.bufferMinutes * minuteMs)
       }));
+      transaction.set(revisionRef, { revision: FieldValue.increment(1) }, { merge: true });
       const message = conversationRef.collection('messages').doc();
       if (!conversation.exists) transaction.create(conversationRef, {
         participantUid: user.uid, openedBy: invite.adminUid, openedAt: FieldValue.serverTimestamp(),
@@ -330,8 +351,9 @@ export function createCalendarBooking({ db, caller, assertAdmin, checkText, opti
       const [profile, conversation] = await Promise.all([transaction.get(profileRef), transaction.get(conversationRef)]);
       const interview = profile.data()?.interview;
       if (interview?.source !== 'calendar') unavailable('No booked interview is scheduled.');
+      const revisionRef = calendarRevisionRef(db, interview.contactAdminUid);
       const refs = (interview.bookingLockIds || []).map(id => db.doc(`calendarSlotLocks/${id}`));
-      const locks = await Promise.all(refs.map(ref => transaction.get(ref)));
+      const [, ...locks] = await Promise.all([transaction.get(revisionRef), ...refs.map(ref => transaction.get(ref))]);
       transaction.update(profileRef, { interview: FieldValue.delete() });
       transaction.set(db.doc(`applicantSummaries/${uid}`), {
         interviewMode: FieldValue.delete(), interviewAt: FieldValue.delete()
@@ -339,6 +361,7 @@ export function createCalendarBooking({ db, caller, assertAdmin, checkText, opti
       locks.forEach((lock, index) => {
         if (lock.data()?.applicantUid === uid) transaction.delete(refs[index]);
       });
+      transaction.set(revisionRef, { revision: FieldValue.increment(1) }, { merge: true });
       if (conversation.exists) transaction.create(conversationRef.collection('messages').doc(), {
         senderUid: user.uid, senderRole: 'admin', createdAt: FieldValue.serverTimestamp(),
         text: 'Your booked interview has been canceled. An admin will contact you about a new time.'

@@ -64,7 +64,7 @@ service cloud.firestore {
       allow write: if false;
     }
     match /conversations/{uid} {
-      allow get: if owns(uid) || isAdmin();
+      allow get: if isAdmin();
       allow list: if isAdmin();
       allow write: if false;
       match /messages/{messageId} {

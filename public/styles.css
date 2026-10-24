@@ -102,23 +102,40 @@
 .brand-logo{display:block;width:62px;height:62px;object-fit:contain}
 #admin-view{text-align:center}
 #admin-view .button-link{margin:8px 5px 0}
-#profiles-view > .page-intro{max-width:760px;margin:0 auto 34px;text-align:center}
-#profiles-view > .page-intro > p{margin-left:auto;margin-right:auto}
 @media(max-width:700px){.brand-logo{width:54px;height:54px}}
 body{display:flex;flex-direction:column}
 main{width:100%;flex:1}
 .app-loading .site-footer{visibility:hidden}
-.site-footer{width:100%;margin-top:auto;padding:28px 24px;background:#e9eee5;border-top:1px solid #d5dfd1;color:#31513b}
-.footer-inner{max-width:1172px;margin:0 auto;display:grid;justify-items:center;gap:13px;text-align:center}
-.footer-contact,.footer-links{display:flex;flex-wrap:wrap;align-items:center;justify-content:center;gap:8px 13px;line-height:1.5}
-.footer-contact strong{font-family:Fraunces,Georgia,serif;font-size:1.16rem}
-.site-footer a{color:#234837;text-underline-offset:3px;overflow-wrap:anywhere}
-.footer-links{gap:12px 20px}
+.site-header{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr)}
+.site-header .brand{grid-column:2;justify-self:center}
+.site-header .header-actions,.site-header > .text-button{grid-column:3;justify-self:end}
+.page-intro{max-width:780px;margin:0 auto 34px;text-align:center}
+.page-intro > p,.welcome > p{margin-left:auto;margin-right:auto}
+.auth-layout{grid-template-columns:1fr;justify-items:center;max-width:760px;min-height:0;margin:0 auto;gap:34px}
+.welcome{max-width:700px;text-align:center}
+.auth-card{width:min(100%,480px)}
+.state-card{text-align:center}
+.card > h2,.card > h3,.card > .eyebrow,.questionnaire-editor-card > summary{text-align:center}
+.card > .eyebrow{display:block}
+.section-heading,.inbox-heading{justify-content:center;text-align:center}
+.questionnaire-link{text-align:center}
+.policy-page article > .eyebrow,.policy-page article > h1,.policy-page article > p.muted{text-align:center}
+.site-footer{width:100%;margin-top:auto;padding:40px 24px 24px;background:#203b2b;border-top:4px solid #72916f;color:#f5f5ed}
+.footer-inner{max-width:960px;margin:0 auto;display:grid;justify-items:center;gap:22px;text-align:center}
+.footer-contact{display:grid;grid-template-columns:auto auto auto;align-items:center;justify-items:center;justify-content:center;gap:7px 14px;line-height:1.5}
+.footer-contact strong{grid-column:1 / -1;font-family:Fraunces,Georgia,serif;font-size:1.35rem;color:#fff;margin-bottom:5px}
+.footer-contact > a:nth-of-type(n+3),.footer-contact > span:last-child{grid-column:1 / -1}
+.footer-divider{color:#a9c1a7}
+.site-footer a{color:#f5f5ed;text-underline-offset:3px;overflow-wrap:anywhere}
+.site-footer a:hover{color:#d1e7cd}
+.footer-links{display:flex;flex-wrap:wrap;align-items:center;justify-content:center;gap:16px 26px}
 .facebook-link{display:inline-flex;align-items:center}
 .facebook-link img{width:28px;height:28px}
-.footer-copy{margin:0;font-size:.8rem;color:#607261}
+.footer-copy{width:100%;margin:0;padding-top:18px;border-top:1px solid #4c6651;font-size:.8rem;color:#c2d3c0}
 .policy-page{max-width:850px}
 .policy-page h1{font-size:clamp(2.3rem,5vw,3.7rem)}
 .policy-page h2{margin:30px 0 10px}
 .policy-page li{margin-bottom:8px;line-height:1.65}
-@media(max-width:520px){.site-footer{padding:25px 15px}.footer-contact{flex-direction:column;gap:5px}.footer-contact .footer-divider{display:none}}
+@media(max-width:900px){.site-header{grid-template-columns:1fr;justify-items:center;padding:12px 15px;gap:8px}.site-header .brand,.site-header .header-actions,.site-header > .text-button{grid-column:1;justify-self:center}.header-actions{flex-wrap:wrap;justify-content:center}}
+@media(max-width:620px){.footer-contact{grid-template-columns:1fr}.footer-contact > *{grid-column:1}.footer-divider{display:none}}
+@media(max-width:520px){.site-footer{padding:32px 15px 22px}.footer-links{gap:14px 20px}}

@@ -258,9 +258,9 @@ export const sendMessage = onCall(options, async request => {
     const message = conversation.collection('messages').doc();
     if (!existing.exists) transaction.create(conversation, {
       participantUid: targetUid, openedBy: user.uid, openedAt: FieldValue.serverTimestamp(),
-      firstMessageId: message.id, contactAdminUid: user.uid, contactAdminEmail: user.token.email || ''
+      firstMessageId: message.id, contactAdminUid: user.uid
     });
-    else if (isAdmin) transaction.update(conversation, { contactAdminUid: user.uid, contactAdminEmail: user.token.email || '' });
+    else if (isAdmin) transaction.update(conversation, { contactAdminUid: user.uid, contactAdminEmail: FieldValue.delete() });
     transaction.create(message, {
       senderUid: user.uid, senderRole: isAdmin ? 'admin' : 'member', text,
       recipientAdminUid: isAdmin ? null : (existing.data()?.contactAdminUid || null),
@@ -268,6 +268,30 @@ export const sendMessage = onCall(options, async request => {
     });
   });
   return { sent: true };
+});
+
+export const sanitizeMyContacts = onCall({ ...options, timeoutSeconds: 120 }, async request => {
+  const user = caller(request);
+  const profileRef = db.doc(`users/${user.uid}`);
+  const conversationRef = db.doc(`conversations/${user.uid}`);
+  const [profile, conversation] = await Promise.all([profileRef.get(), conversationRef.get()]);
+  if (!profile.exists && !conversation.exists) return { cleaned: true };
+  const writer = db.bulkWriter();
+  if (profile.data()?.interview?.contactAdminEmail) {
+    writer.update(profileRef, { 'interview.contactAdminEmail': FieldValue.delete() });
+  }
+  if (conversation.exists && conversation.data().privacyVersion !== 1) {
+    const messages = await conversationRef.collection('messages').where('senderRole', '==', 'admin').get();
+    for (const message of messages.docs) {
+      const currentText = message.data().text;
+      if (typeof currentText !== 'string') continue;
+      const safeText = currentText.replace(/\b\S+@\S+\s+is your contact\./g, 'A Homesteader admin is your contact.');
+      if (safeText !== currentText) writer.update(message.ref, { text: safeText });
+    }
+    writer.update(conversationRef, { contactAdminEmail: FieldValue.delete(), privacyVersion: 1 });
+  }
+  await writer.close();
+  return { cleaned: true };
 });
 
 export const setReviewStatus = onCall(options, async request => {
@@ -466,13 +490,12 @@ export const manageInterview = onCall(options, async request => {
       invalid('Choose a valid time zone.');
     }
     if (note) await checkText(note);
-    const contactEmail = user.token.email || 'a Homesteader admin';
     interview = {
       mode, scheduledAt: Timestamp.fromDate(date), timeZone, timeZoneLabel, note, meetingLink,
-      contactAdminUid: user.uid, contactAdminEmail: contactEmail, updatedAt: FieldValue.serverTimestamp()
+      contactAdminUid: user.uid, updatedAt: FieldValue.serverTimestamp()
     };
     invitation = `You are invited to a ${modeLabel} interview on ${formatted} ${timeZoneLabel}. ` +
-      `${contactEmail} is your contact. Reply here to confirm the date and time or ask questions.` +
+      'A Homesteader admin is your contact. Reply here to confirm the date and time or ask questions.' +
       (meetingLink ? `\nZoom link: ${meetingLink}` : '') + (note ? `\n${note}` : '');
   }
   await db.runTransaction(async transaction => {
@@ -504,9 +527,9 @@ export const manageInterview = onCall(options, async request => {
     }
     if (!existing.exists) transaction.create(conversation, {
       participantUid: uid, openedBy: user.uid, openedAt: FieldValue.serverTimestamp(),
-      firstMessageId: message.id, contactAdminUid: user.uid, contactAdminEmail: user.token.email || ''
+      firstMessageId: message.id, contactAdminUid: user.uid
     });
-    else transaction.update(conversation, { contactAdminUid: user.uid, contactAdminEmail: user.token.email || '' });
+    else transaction.update(conversation, { contactAdminUid: user.uid, contactAdminEmail: FieldValue.delete() });
     transaction.create(message, { senderUid: user.uid, senderRole: 'admin', text: invitation, createdAt: FieldValue.serverTimestamp() });
   });
   return { saved: true };

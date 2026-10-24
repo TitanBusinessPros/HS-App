@@ -25,12 +25,12 @@ function start() {
   const functions = getFunctions(app, 'us-west2');
   const saveProfileCall = httpsCallable(functions, 'saveProfile');
   const sendMessageCall = httpsCallable(functions, 'sendMessage');
+  const sanitizeMyContactsCall = httpsCallable(functions, 'sanitizeMyContacts');
   let currentUser = null;
   let currentProfile = null;
   let isAdmin = false;
   let pendingPhotos = null;
   let profileInitialized = false;
-  let memberMessagesUnsub = null;
   let memberConversationUnsub = null;
   let profileUnsub = null;
   let questionnaireUnsub = null;
@@ -86,8 +86,8 @@ function start() {
     document.body.classList.remove('app-loading');
   }
   function cleanSubscriptions() {
-    for (const unsub of [memberMessagesUnsub, memberConversationUnsub, profileUnsub, questionnaireUnsub, questionnaireConfigUnsub, skillsUnsub]) if (unsub) unsub();
-    memberMessagesUnsub = memberConversationUnsub = profileUnsub = questionnaireUnsub = questionnaireConfigUnsub = skillsUnsub = null;
+    for (const unsub of [memberConversationUnsub, profileUnsub, questionnaireUnsub, questionnaireConfigUnsub, skillsUnsub]) if (unsub) unsub();
+    memberConversationUnsub = profileUnsub = questionnaireUnsub = questionnaireConfigUnsub = skillsUnsub = null;
   }
   function updateQuestionnaireStatus() {
     if (!questionnaireSaved) {
@@ -149,6 +149,8 @@ function start() {
           'Edit homestead page' : 'View homestead page';
         showView('admin-view');
       } else {
+        await sanitizeMyContactsCall();
+        if (generation !== authGeneration) return;
         showView('member-view');
         watchProfile(user.uid);
         questionnaireUnsub = onSnapshot(doc(db, 'questionnaires', user.uid), snapshot => {
@@ -247,7 +249,7 @@ function start() {
         .formatToParts(date).find(part => part.type === 'timeZoneName')?.value || '';
     } catch { /* Older invitations can fall back to the applicant's local time. */ }
     $('interview-time').textContent = `Scheduled for ${scheduled}${timeZoneLabel ? ` ${timeZoneLabel}` : ''}. Your local time: ${date.toLocaleString()}.`;
-    $('interview-admin').textContent = `Your contact: ${interview.contactAdminEmail || 'a Homesteader admin'}`;
+    $('interview-admin').textContent = 'Your contact: a Homesteader admin';
     $('interview-note').textContent = interview.note || '';
     $('interview-note').hidden = !interview.note;
     const meeting = $('interview-meeting-link');
@@ -314,16 +316,14 @@ function start() {
   });
 
   function watchMemberConversation(uid) {
-    memberConversationUnsub = onSnapshot(doc(db, 'conversations', uid), snapshot => {
-      const opened = snapshot.exists();
+    memberConversationUnsub = onSnapshot(query(collection(db, 'conversations', uid, 'messages'), orderBy('createdAt', 'asc')), snapshot => {
+      const opened = !snapshot.empty;
       $('inbox-empty').hidden = opened;
       $('member-chat').hidden = !opened;
-      $('inbox-contact').hidden = !opened || !snapshot.data()?.contactAdminEmail;
-      $('inbox-contact').textContent = opened && snapshot.data()?.contactAdminEmail ?
-        `Your contact is ${snapshot.data().contactAdminEmail}. Homesteader admins can review this conversation.` : '';
-      if (opened && !memberMessagesUnsub) {
-        memberMessagesUnsub = onSnapshot(query(collection(db, 'conversations', uid, 'messages'), orderBy('createdAt', 'asc')), messages => renderMessages('member-messages', messages, uid), error => status('member-message-status', readableError(error), true));
-      }
+      $('inbox-contact').hidden = !opened;
+      $('inbox-contact').textContent = opened ?
+        'A Homesteader admin is your contact. Homesteader admins can review this conversation.' : '';
+      if (opened) renderMessages('member-messages', snapshot, uid);
     }, error => status('member-message-status', readableError(error), true));
   }
   $('member-message-form').addEventListener('submit', async event => {
@@ -355,7 +355,8 @@ function start() {
       const date = message.createdAt?.toDate?.();
       meta.textContent = `${message.senderRole === 'admin' ? 'Admin' : 'Applicant'}${date ? ` · ${date.toLocaleString()}` : ''}`;
       const body = document.createElement('div');
-      body.textContent = message.text;
+      body.textContent = message.senderRole === 'admin' ?
+        message.text.replace(/\b\S+@\S+\s+is your contact\./g, 'A Homesteader admin is your contact.') : message.text;
       bubble.append(meta, body);
       container.append(bubble);
     });

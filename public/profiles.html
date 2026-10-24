@@ -17,8 +17,16 @@
     <section id="loading" class="state-card"><h1>Opening private profiles...</h1></section>
     <section id="access-message" class="state-card" hidden><h1>Admin access required</h1><p id="access-text">Sign in with an admin Google account to review profiles.</p><a class="primary-button button-link" href="./">Go to Homesteader</a></section>
     <section id="profiles-view" hidden>
-      <div class="page-intro"><span class="eyebrow">Admin workspace</span><h1>Applicant profiles</h1><p>Profiles are listed alphabetically. Select a person to load their full introduction, photos, questionnaire, and private conversation.</p><a class="text-button" href="./">Back to admin home</a></div>
+      <div class="page-intro"><span class="eyebrow">Admin workspace</span><h1>Applicant profiles</h1><p>Profiles are listed alphabetically. Select a person to load their full introduction, photos, skills, questionnaire, and private conversation.</p><a class="text-button" href="./">Back to admin home</a></div>
       <p id="page-message" class="message" role="status"></p>
+      <section id="skill-rankings" class="card skill-ranking-card">
+        <div class="section-heading"><h2>Rank applicants by skill</h2><span id="skill-rank-count" class="count">0</span></div>
+        <p class="muted">Choose one of 100 skills. Applicants with the most reported years appear first. Organization details are supplied by applicants and should be checked with them.</p>
+        <label for="rank-skill">Choose a skill</label><select id="rank-skill"><option value="">Choose a skill</option></select>
+        <div id="rank-list" class="rank-list"></div>
+        <p id="rank-empty" class="muted">Choose a skill to see its ranking.</p>
+        <div class="pagination"><button id="rank-previous" class="text-button" type="button">Previous</button><span id="rank-page-label">Page 1 of 1</span><button id="rank-next" class="text-button" type="button">Next</button></div>
+      </section>
       <div class="admin-grid">
         <aside class="card applicant-list-card">
           <div class="section-heading"><h2>Profiles</h2><span id="applicant-count" class="count">0</span></div>
@@ -37,6 +45,7 @@
             <div id="detail-photos" class="detail-photos"></div>
             <div class="detail-label">Introduction</div><p id="detail-bio" class="detail-bio"></p>
             <details id="questionnaire-results" class="questionnaire-results"><summary id="questionnaire-summary">Questionnaire: not completed</summary><div id="questionnaire-answers"></div></details>
+            <details id="applicant-skills" class="questionnaire-results"><summary id="applicant-skills-summary">Skills: none added</summary><div id="applicant-skills-list"></div></details>
             <label for="review-status">Review status</label>
             <div class="review-row"><select id="review-status"><option value="submitted">Submitted</option><option value="reviewing">Reviewing</option><option value="good-fit">Good fit</option><option value="declined">Declined</option></select><button id="save-review" class="secondary-button" type="button">Save status</button></div>
             <p id="review-message" class="message" role="status"></p>

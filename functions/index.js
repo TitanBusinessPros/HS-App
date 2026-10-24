@@ -191,8 +191,11 @@ export const manageApplicant = onCall(options, async request => {
   if (typeof uid !== 'string' || !uid || uid.includes('/') || uid === user.uid || !['block', 'delete', 'unblock'].includes(action)) invalid('Choose an applicant and an action.');
   await db.runTransaction(async transaction => {
     await assertActive(transaction, user.uid);
-    const [admin, targetAdmin, profile] = await Promise.all([
-      transaction.get(db.doc(`admins/${user.uid}`)), transaction.get(db.doc(`admins/${uid}`)), transaction.get(db.doc(`users/${uid}`))
+    const [admin, targetAdmin, profile, skillRecord] = await Promise.all([
+      transaction.get(db.doc(`admins/${user.uid}`)),
+      transaction.get(db.doc(`admins/${uid}`)),
+      transaction.get(db.doc(`users/${uid}`)),
+      transaction.get(db.doc(`skills/${uid}`))
     ]);
     if (!admin.exists || targetAdmin.exists) throw new HttpsError('permission-denied', 'Admin access required.');
     const blocked = db.doc(`blockedUsers/${uid}`);
@@ -203,6 +206,12 @@ export const manageApplicant = onCall(options, async request => {
         if (profile.exists) transaction.delete(profile.ref);
         transaction.delete(db.doc(`applicantSummaries/${uid}`));
         transaction.delete(db.doc(`questionnaires/${uid}`));
+        transaction.delete(db.doc(`skills/${uid}`));
+        for (const entry of skillRecord.data()?.entries || []) {
+          if (Number.isInteger(entry.id) && entry.id >= 0 && entry.id < 100) {
+            transaction.delete(db.doc(`skillRankings/${entry.id}/applicants/${uid}`));
+          }
+        }
       }
     }
   });
@@ -243,6 +252,62 @@ export const saveQuestionnaire = onCall(options, async request => {
       email: profile.data().email || '',
       status: profile.data().status || 'submitted',
       questionnaireCompletedAt: FieldValue.serverTimestamp()
+    }, { merge: true });
+  });
+  return { saved: true };
+});
+
+export const saveSkills = onCall(options, async request => {
+  const user = caller(request);
+  const raw = request.data?.entries;
+  if (!Array.isArray(raw) || raw.length > 100) invalid('Choose up to 100 homestead skills.');
+  const seen = new Set();
+  const entries = raw.map(item => {
+    const id = item?.id;
+    const years = item?.years;
+    const organization = typeof item?.organization === 'string' ? item.organization.trim() : '';
+    if (!Number.isInteger(id) || id < 0 || id >= 100 || seen.has(id) ||
+        typeof years !== 'number' || !Number.isFinite(years) || years < 0 || years > 80 ||
+        !Number.isInteger(years * 2) || organization.length < 2 || organization.length > 120) {
+      invalid('Add valid years and a company, organization, or homestead for each selected skill.');
+    }
+    seen.add(id);
+    return { id, years, organization };
+  });
+  for (let index = 0; index < entries.length; index += 10) {
+    await checkText(entries.slice(index, index + 10).map(entry =>
+      `${entry.organization} is the company or homestead for this skill.`
+    ).join('\n'));
+  }
+  await db.runTransaction(async transaction => {
+    await assertActive(transaction, user.uid);
+    const skillDoc = db.doc(`skills/${user.uid}`);
+    const [admin, profile, previous] = await Promise.all([
+      transaction.get(db.doc(`admins/${user.uid}`)),
+      transaction.get(db.doc(`users/${user.uid}`)),
+      transaction.get(skillDoc)
+    ]);
+    if (admin.exists || !profile.exists) throw new HttpsError('failed-precondition', 'Save your applicant profile before adding skills.');
+    const currentIds = new Set(entries.map(entry => entry.id));
+    for (const old of previous.data()?.entries || []) {
+      if (Number.isInteger(old.id) && old.id >= 0 && old.id < 100 && !currentIds.has(old.id)) {
+        transaction.delete(db.doc(`skillRankings/${old.id}/applicants/${user.uid}`));
+      }
+    }
+    for (const entry of entries) {
+      transaction.set(db.doc(`skillRankings/${entry.id}/applicants/${user.uid}`), {
+        years: entry.years,
+        organization: entry.organization,
+        updatedAt: FieldValue.serverTimestamp()
+      });
+    }
+    transaction.set(skillDoc, { version: 1, entries, updatedAt: FieldValue.serverTimestamp() });
+    transaction.set(db.doc(`applicantSummaries/${user.uid}`), {
+      name: profile.data().profile?.name || 'Unnamed',
+      location: profile.data().profile?.location || '',
+      email: profile.data().email || '',
+      status: profile.data().status || 'submitted',
+      skillCount: entries.length
     }, { merge: true });
   });
   return { saved: true };

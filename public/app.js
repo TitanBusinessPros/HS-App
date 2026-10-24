@@ -30,6 +30,7 @@ function start() {
   let memberConversationUnsub = null;
   let profileUnsub = null;
   let questionnaireUnsub = null;
+  let skillsUnsub = null;
   let authGeneration = 0;
   const photoPreview = document.createElement('img');
   photoPreview.className = 'photo-hover-preview';
@@ -76,8 +77,8 @@ function start() {
     for (const view of ['auth-view', 'member-view', 'admin-view']) $(view).hidden = view !== id;
   }
   function cleanSubscriptions() {
-    for (const unsub of [memberMessagesUnsub, memberConversationUnsub, profileUnsub, questionnaireUnsub]) if (unsub) unsub();
-    memberMessagesUnsub = memberConversationUnsub = profileUnsub = questionnaireUnsub = null;
+    for (const unsub of [memberMessagesUnsub, memberConversationUnsub, profileUnsub, questionnaireUnsub, skillsUnsub]) if (unsub) unsub();
+    memberMessagesUnsub = memberConversationUnsub = profileUnsub = questionnaireUnsub = skillsUnsub = null;
   }
   $('google-sign-in').addEventListener('click', async () => {
     const button = $('google-sign-in');
@@ -125,6 +126,10 @@ function start() {
         watchProfile(user.uid);
         questionnaireUnsub = onSnapshot(doc(db, 'questionnaires', user.uid), snapshot => {
           $('questionnaire-status').textContent = snapshot.exists() ? 'Completed. You can update your answers.' : 'Not completed yet.';
+        }, error => status('profile-message', readableError(error), true));
+        skillsUnsub = onSnapshot(doc(db, 'skills', user.uid), snapshot => {
+          const count = snapshot.exists() ? (snapshot.data().entries || []).length : 0;
+          $('skills-status').textContent = count ? `${count} skills saved. You can update them.` : 'No skills added yet.';
         }, error => status('profile-message', readableError(error), true));
         watchMemberConversation(user.uid);
       }

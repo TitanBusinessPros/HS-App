@@ -5,6 +5,7 @@ import { initializeAppCheck, ReCaptchaEnterpriseProvider } from 'https://www.gst
 import { getFunctions, httpsCallable } from 'https://www.gstatic.com/firebasejs/13.1.0/firebase-functions.js';
 import { firebaseConfig, appCheckSiteKey } from './firebase-config.js';
 import { questions } from './questions.js';
+import { skills, skillCategories } from './skills.js';
 
 const $ = id => document.getElementById(id);
 const app = initializeApp(firebaseConfig);
@@ -26,8 +27,12 @@ let summariesUnsub = null;
 let blockedUnsub = null;
 let profileUnsub = null;
 let questionnaireUnsub = null;
+let skillsUnsub = null;
 let conversationUnsub = null;
 let messagesUnsub = null;
+let rankingsUnsub = null;
+let rankings = [];
+let rankPage = 0;
 let authGeneration = 0;
 
 const photoPreview = document.createElement('img');
@@ -50,8 +55,8 @@ function showAccess(message) {
 }
 
 function cleanSelection() {
-  for (const unsub of [profileUnsub, questionnaireUnsub, conversationUnsub, messagesUnsub]) if (unsub) unsub();
-  profileUnsub = questionnaireUnsub = conversationUnsub = messagesUnsub = null;
+  for (const unsub of [profileUnsub, questionnaireUnsub, skillsUnsub, conversationUnsub, messagesUnsub]) if (unsub) unsub();
+  profileUnsub = questionnaireUnsub = skillsUnsub = conversationUnsub = messagesUnsub = null;
   selectedUid = null;
   photoPreview.hidden = true;
   $('detail-photos').replaceChildren();
@@ -62,8 +67,9 @@ function cleanSelection() {
 
 function cleanSubscriptions() {
   cleanSelection();
-  for (const unsub of [summariesUnsub, blockedUnsub]) if (unsub) unsub();
-  summariesUnsub = blockedUnsub = null;
+  for (const unsub of [summariesUnsub, blockedUnsub, rankingsUnsub]) if (unsub) unsub();
+  summariesUnsub = blockedUnsub = rankingsUnsub = null;
+  rankings = [];
 }
 
 function statusLabel(value) {
@@ -97,6 +103,44 @@ function renderList() {
     meta.textContent = `${person.email || ''} · ${blocked.has(person.uid) ? 'Blocked' : statusLabel(person.status)}${person.questionnaireCompletedAt ? ' · Questionnaire complete' : ''}`;
     button.append(name, meta);
     button.addEventListener('click', () => selectApplicant(person.uid));
+    list.append(button);
+  });
+}
+
+function rankedApplicants() {
+  const byUid = new Map(applicants.map(person => [person.uid, person]));
+  return rankings.filter(entry => byUid.has(entry.uid) && !blocked.has(entry.uid))
+    .sort((a, b) => b.years - a.years ||
+      nameCollator.compare(byUid.get(a.uid).name || '', byUid.get(b.uid).name || ''));
+}
+
+function renderRanking() {
+  const sorted = rankedApplicants();
+  const byUid = new Map(applicants.map(person => [person.uid, person]));
+  const pages = Math.max(1, Math.ceil(sorted.length / pageSize));
+  rankPage = Math.min(rankPage, pages - 1);
+  $('skill-rank-count').textContent = String(sorted.length);
+  $('rank-page-label').textContent = `Page ${rankPage + 1} of ${pages}`;
+  $('rank-previous').disabled = rankPage === 0;
+  $('rank-next').disabled = rankPage >= pages - 1;
+  $('rank-empty').hidden = sorted.length > 0;
+  $('rank-empty').textContent = $('rank-skill').value ? 'No applicants have reported this skill yet.' : 'Choose a skill to see its ranking.';
+  const list = $('rank-list');
+  list.replaceChildren();
+  sorted.slice(rankPage * pageSize, (rankPage + 1) * pageSize).forEach((entry, index) => {
+    const person = byUid.get(entry.uid);
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'rank-row';
+    const heading = document.createElement('strong');
+    heading.textContent = `${rankPage * pageSize + index + 1}. ${person.name || 'Unnamed'} — ${entry.years} ${entry.years === 1 ? 'year' : 'years'}`;
+    const detail = document.createElement('span');
+    detail.textContent = `${entry.organization} · ${person.email || ''}`;
+    button.append(heading, detail);
+    button.addEventListener('click', () => {
+      selectApplicant(entry.uid);
+      $('admin-detail').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
     list.append(button);
   });
 }
@@ -201,6 +245,26 @@ function renderQuestionnaire(data) {
   });
 }
 
+function renderApplicantSkills(data) {
+  const entries = data?.version === 1 && Array.isArray(data.entries) ? data.entries : [];
+  $('applicant-skills-summary').textContent = entries.length ? `Skills: ${entries.length} selected` : 'Skills: none added';
+  const list = $('applicant-skills-list');
+  list.replaceChildren();
+  [...entries].sort((a, b) => b.years - a.years || nameCollator.compare(skills[a.id]?.name || '', skills[b.id]?.name || ''))
+    .forEach(entry => {
+      const skill = skills[entry.id];
+      if (!skill) return;
+      const row = document.createElement('div');
+      row.className = 'questionnaire-answer';
+      const name = document.createElement('strong');
+      name.textContent = `${skill.name} — ${entry.years} ${entry.years === 1 ? 'year' : 'years'}`;
+      const detail = document.createElement('span');
+      detail.textContent = `Company, organization, or homestead: ${entry.organization || 'Not provided'}`;
+      row.append(name, detail);
+      list.append(row);
+    });
+}
+
 function renderMessages(snapshot) {
   const list = $('admin-messages');
   list.replaceChildren();
@@ -238,6 +302,9 @@ function selectApplicant(uid) {
   questionnaireUnsub = onSnapshot(doc(db, 'questionnaires', uid), snapshot => {
     if (selectedUid === selected) renderQuestionnaire(snapshot.exists() ? snapshot.data() : null);
   }, error => status('page-message', error.message || 'Could not load questionnaire.', true));
+  skillsUnsub = onSnapshot(doc(db, 'skills', uid), snapshot => {
+    if (selectedUid === selected) renderApplicantSkills(snapshot.exists() ? snapshot.data() : null);
+  }, error => status('page-message', error.message || 'Could not load skills.', true));
   conversationUnsub = onSnapshot(doc(db, 'conversations', uid), snapshot => {
     if (selectedUid !== selected) return;
     const opened = snapshot.exists();
@@ -252,12 +319,40 @@ function selectApplicant(uid) {
   }, error => status('admin-message-status', error.message || 'Could not load conversation.', true));
 }
 
+for (const category of skillCategories) {
+  const group = document.createElement('optgroup');
+  group.label = category.name;
+  skills.filter(skill => skill.category === category.name).forEach(skill => {
+    const option = document.createElement('option');
+    option.value = String(skill.id);
+    option.textContent = skill.name;
+    group.append(option);
+  });
+  $('rank-skill').append(group);
+}
+
+$('rank-skill').addEventListener('change', () => {
+  if (rankingsUnsub) rankingsUnsub();
+  rankingsUnsub = null;
+  rankings = [];
+  rankPage = 0;
+  renderRanking();
+  const id = $('rank-skill').value;
+  if (id === '') return;
+  rankingsUnsub = onSnapshot(collection(db, 'skillRankings', id, 'applicants'), snapshot => {
+    rankings = snapshot.docs.map(item => ({ uid: item.id, ...item.data() }));
+    renderRanking();
+  }, error => status('page-message', error.message || 'Could not load skill rankings.', true));
+});
+
 onAuthStateChanged(auth, async user => {
   const generation = ++authGeneration;
   cleanSubscriptions();
   currentUser = user;
   applicants = [];
   blocked = new Map();
+  $('rank-skill').value = '';
+  renderRanking();
   $('account-email').textContent = user?.email || '';
   $('sign-out').hidden = !user;
   if (!user) return showAccess('Sign in with an admin Google account to review profiles.');
@@ -275,11 +370,13 @@ onAuthStateChanged(auth, async user => {
         .sort((a, b) => nameCollator.compare(a.name || '', b.name || '') || nameCollator.compare(a.email || '', b.email || ''));
       if (selectedUid && !applicants.some(person => person.uid === selectedUid)) cleanSelection();
       renderList();
+      renderRanking();
     }, error => status('page-message', error.message || 'Could not load profiles.', true));
     blockedUnsub = onSnapshot(collection(db, 'blockedUsers'), snapshot => {
       blocked = new Map(snapshot.docs.map(item => [item.id, item.data()]));
       renderList();
       renderBlockedList();
+      renderRanking();
       if (selectedUid) {
         $('detail-status').textContent = blocked.has(selectedUid) ? 'Blocked' : statusLabel(applicants.find(person => person.uid === selectedUid)?.status);
         $('block-applicant').textContent = blocked.has(selectedUid) ? 'Unblock account' : 'Block account';
@@ -296,6 +393,8 @@ $('sign-out').addEventListener('click', async () => { await signOut(auth); locat
 $('applicant-search').addEventListener('input', () => { page = 0; renderList(); });
 $('previous-page').addEventListener('click', () => { if (page > 0) { page--; renderList(); } });
 $('next-page').addEventListener('click', () => { if ((page + 1) * pageSize < filteredApplicants().length) { page++; renderList(); } });
+$('rank-previous').addEventListener('click', () => { if (rankPage > 0) { rankPage--; renderRanking(); } });
+$('rank-next').addEventListener('click', () => { if ((rankPage + 1) * pageSize < rankedApplicants().length) { rankPage++; renderRanking(); } });
 
 $('save-review').addEventListener('click', async () => {
   if (!selectedUid) return;

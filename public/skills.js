@@ -47,10 +47,11 @@ export const skills = skillCategories.flatMap(category =>
 ).map((skill, id) => ({ ...skill, id }));
 
 export function buildSkillCatalog(customSkills = []) {
+  const deleted = new Set(customSkills.filter(skill => skill.deleted === true).map(skill => String(skill.id)));
   const categories = skillCategories.map(category => category.name);
   const byCategory = new Map(categories.map(name => [name.toLowerCase(), name]));
-  const all = [...skills];
-  const sorted = [...customSkills].sort((a, b) =>
+  const all = skills.filter(skill => !deleted.has(String(skill.id)));
+  const sorted = customSkills.filter(skill => skill.deleted !== true).sort((a, b) =>
     String(a.category).localeCompare(String(b.category)) || String(a.name).localeCompare(String(b.name)));
   for (const skill of sorted) {
     if (typeof skill.id !== 'string' || typeof skill.name !== 'string' || typeof skill.category !== 'string') continue;

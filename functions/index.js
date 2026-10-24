@@ -697,6 +697,27 @@ export const addSkill = onCall(options, async request => {
   return { id };
 });
 
+export const deleteSkill = onCall(options, async request => {
+  const user = caller(request);
+  const id = request.data?.id;
+  if (!validSkillId(id)) invalid('Choose a skill to delete.');
+  await db.runTransaction(async transaction => {
+    await assertActive(transaction, user.uid);
+    const skillRef = db.doc(`skillCatalog/${id}`);
+    const [admin, skill] = await Promise.all([
+      transaction.get(db.doc(`admins/${user.uid}`)), transaction.get(skillRef)
+    ]);
+    if (!admin.exists) throw new HttpsError('permission-denied', 'Admin access required.');
+    if ((typeof id === 'string' && !skill.exists) || skill.data()?.deleted === true) {
+      throw new HttpsError('not-found', 'This skill is no longer available.');
+    }
+    transaction.set(skillRef, {
+      deleted: true, deletedAt: FieldValue.serverTimestamp(), deletedBy: user.uid
+    }, { merge: true });
+  });
+  return { deleted: true };
+});
+
 export const saveSkills = onCall({ ...options, timeoutSeconds: 120 }, async request => {
   const user = caller(request);
   const raw = request.data?.entries;
@@ -722,15 +743,17 @@ export const saveSkills = onCall({ ...options, timeoutSeconds: 120 }, async requ
   await db.runTransaction(async transaction => {
     await assertActive(transaction, user.uid);
     const skillDoc = db.doc(`skills/${user.uid}`);
-    const customIds = entries.filter(entry => typeof entry.id === 'string').map(entry => entry.id);
-    const [admin, profile, previous, ...customSkills] = await Promise.all([
+    const [admin, profile, previous, ...catalogSkills] = await Promise.all([
       transaction.get(db.doc(`admins/${user.uid}`)),
       transaction.get(db.doc(`users/${user.uid}`)),
       transaction.get(skillDoc),
-      ...customIds.map(id => transaction.get(db.doc(`skillCatalog/${id}`)))
+      ...entries.map(entry => transaction.get(db.doc(`skillCatalog/${entry.id}`)))
     ]);
     if (admin.exists || !profile.exists) throw new HttpsError('failed-precondition', 'Save your applicant profile before adding skills.');
-    if (customSkills.some(snapshot => !snapshot.exists)) invalid('A selected skill is no longer available. Refresh and try again.');
+    if (catalogSkills.some((snapshot, index) => snapshot.data()?.deleted === true ||
+      (typeof entries[index].id === 'string' && !snapshot.exists))) {
+      invalid('A selected skill is no longer available. Refresh and try again.');
+    }
     const currentIds = new Set(entries.map(entry => String(entry.id)));
     for (const old of previous.data()?.entries || []) {
       if (validSkillId(old.id) && !currentIds.has(String(old.id))) {

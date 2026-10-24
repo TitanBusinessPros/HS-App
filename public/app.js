@@ -6,6 +6,7 @@ import { getFunctions, httpsCallable } from 'https://www.gstatic.com/firebasejs/
 import { firebaseConfig, appCheckSiteKey } from './firebase-config.js';
 import { normalizeExternalUrl } from './links.js';
 import { questions } from './questions.js';
+import { buildSkillCatalog } from './skills.js';
 
 const $ = id => document.getElementById(id);
 $('open-private-profiles').addEventListener('click', event => {
@@ -44,6 +45,9 @@ function start() {
   let questionnaireSaved = null;
   let questionnaireSettings = null;
   let skillsUnsub = null;
+  let skillCatalogUnsub = null;
+  let memberSkillEntries = [];
+  let memberSkillCatalog = buildSkillCatalog();
   let rosterTeamsUnsub = null;
   let rosterSummariesUnsub = null;
   let rosterMemberUnsubs = new Map();
@@ -104,9 +108,11 @@ function start() {
     document.body.classList.remove('app-loading');
   }
   function cleanSubscriptions() {
-    for (const unsub of [memberConversationUnsub, profileUnsub, questionnaireUnsub, questionnaireConfigUnsub, skillsUnsub, rosterTeamsUnsub, rosterSummariesUnsub]) if (unsub) unsub();
+    for (const unsub of [memberConversationUnsub, profileUnsub, questionnaireUnsub, questionnaireConfigUnsub, skillsUnsub, skillCatalogUnsub, rosterTeamsUnsub, rosterSummariesUnsub]) if (unsub) unsub();
     for (const unsub of rosterMemberUnsubs.values()) unsub();
-    memberConversationUnsub = profileUnsub = questionnaireUnsub = questionnaireConfigUnsub = skillsUnsub = rosterTeamsUnsub = rosterSummariesUnsub = null;
+    memberConversationUnsub = profileUnsub = questionnaireUnsub = questionnaireConfigUnsub = skillsUnsub = skillCatalogUnsub = rosterTeamsUnsub = rosterSummariesUnsub = null;
+    memberSkillEntries = [];
+    memberSkillCatalog = buildSkillCatalog();
     rosterMemberUnsubs = new Map();
     rosterTeams = [];
     rosterMembers = new Map();
@@ -228,6 +234,10 @@ function start() {
     $('questionnaire-status').textContent = current ?
       'Completed. You can update your answers.' : 'The questions changed. Please update your answers.';
   }
+  function updateSkillStatus() {
+    const count = memberSkillEntries.filter(entry => memberSkillCatalog.byId.has(String(entry.id))).length;
+    $('skills-status').textContent = count ? `${count} skills saved. You can update them.` : 'No skills added yet.';
+  }
   $('google-sign-in').addEventListener('click', async () => {
     const button = $('google-sign-in');
     button.disabled = true;
@@ -290,8 +300,13 @@ function start() {
           updateQuestionnaireStatus();
         }, error => status('profile-message', readableError(error), true));
         skillsUnsub = onSnapshot(doc(db, 'skills', user.uid), snapshot => {
-          const count = snapshot.exists() ? (snapshot.data().entries || []).length : 0;
-          $('skills-status').textContent = count ? `${count} skills saved. You can update them.` : 'No skills added yet.';
+          memberSkillEntries = snapshot.exists() ? (snapshot.data().entries || []) : [];
+          updateSkillStatus();
+        }, error => status('profile-message', readableError(error), true));
+        skillCatalogUnsub = onSnapshot(collection(db, 'skillCatalog'), snapshot => {
+          if (generation !== authGeneration) return;
+          memberSkillCatalog = buildSkillCatalog(snapshot.docs.map(item => ({ id: item.id, ...item.data() })));
+          updateSkillStatus();
         }, error => status('profile-message', readableError(error), true));
         watchMemberConversation(user.uid);
       }

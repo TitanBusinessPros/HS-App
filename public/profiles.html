@@ -104,6 +104,14 @@
           <p id="add-skill-message" class="message" role="status"></p>
         </form>
       </section>
+      <section id="delete-skill-card" class="card skill-ranking-card" hidden>
+        <h2>Delete a homestead skill</h2>
+        <p class="muted">All admins can remove a skill from the applicant picker and active rankings. Past submissions remain stored for records.</p>
+        <label for="delete-skill-select">Skill to delete</label>
+        <select id="delete-skill-select"><option value="">Choose a skill</option></select>
+        <button id="delete-skill-button" class="danger-button" type="button">Delete skill</button>
+        <p id="delete-skill-message" class="message" role="status"></p>
+      </section>
       <section id="skill-rankings" class="card skill-ranking-card">
         <div class="section-heading"><h2>Rank applicants by skill</h2><span id="skill-rank-count" class="count">0</span></div>
         <p class="muted">Choose a skill. Applicants with the most reported years appear first. Organization details are supplied by applicants and should be checked with them.</p>

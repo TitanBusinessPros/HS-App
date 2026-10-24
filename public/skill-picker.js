@@ -148,6 +148,7 @@ onAuthStateChanged(auth, async user => {
     catalogUnsub = onSnapshot(collection(db, 'skillCatalog'), snapshot => {
       if (generation !== authGeneration) return;
       catalog = buildSkillCatalog(snapshot.docs.map(item => ({ id: item.id, ...item.data() })));
+      for (const id of selected.keys()) if (!catalog.byId.has(id)) selected.delete(id);
       renderCatalog();
       renderSelected();
       $('loading').hidden = true;

@@ -19,6 +19,7 @@ const setReviewStatus = httpsCallable(functions, 'setReviewStatus');
 const manageApplicant = httpsCallable(functions, 'manageApplicant');
 const manageInterview = httpsCallable(functions, 'manageInterview');
 const addSkill = httpsCallable(functions, 'addSkill');
+const deleteSkill = httpsCallable(functions, 'deleteSkill');
 const saveQuestionnaireConfig = httpsCallable(functions, 'saveQuestionnaireConfig');
 const listAdmins = httpsCallable(functions, 'listAdmins');
 const removeAdmin = httpsCallable(functions, 'removeAdmin');
@@ -789,7 +790,8 @@ $('questionnaire-editor-form').addEventListener('submit', async event => {
 });
 
 function renderApplicantSkills(data) {
-  const entries = data?.version === 1 && Array.isArray(data.entries) ? data.entries : [];
+  const entries = data?.version === 1 && Array.isArray(data.entries) ?
+    data.entries.filter(entry => catalog.byId.has(String(entry.id))) : [];
   $('applicant-skills-summary').textContent = entries.length ? `Skills: ${entries.length} selected` : 'Skills: none added';
   const list = $('applicant-skills-list');
   list.replaceChildren();
@@ -869,7 +871,9 @@ function selectApplicant(uid) {
 
 function renderSkillCatalog() {
   const selectedSkill = $('rank-skill').value;
+  const selectedForDeletion = $('delete-skill-select').value;
   $('rank-skill').replaceChildren(new Option('Choose a skill', ''));
+  $('delete-skill-select').replaceChildren(new Option('Choose a skill', ''));
   $('skill-categories').replaceChildren();
   for (const category of catalog.categories) {
     const categoryOption = document.createElement('option');
@@ -877,15 +881,25 @@ function renderSkillCatalog() {
     $('skill-categories').append(categoryOption);
     const group = document.createElement('optgroup');
     group.label = category;
+    const deleteGroup = document.createElement('optgroup');
+    deleteGroup.label = category;
     catalog.skills.filter(skill => skill.category === category).forEach(skill => {
       const option = document.createElement('option');
       option.value = String(skill.id);
       option.textContent = skill.name;
       group.append(option);
+      const deleteOption = document.createElement('option');
+      deleteOption.value = String(skill.id);
+      deleteOption.textContent = skill.name;
+      deleteGroup.append(deleteOption);
     });
-    $('rank-skill').append(group);
+    if (group.children.length) {
+      $('rank-skill').append(group);
+      $('delete-skill-select').append(deleteGroup);
+    }
   }
   $('rank-skill').value = catalog.byId.has(selectedSkill) ? selectedSkill : '';
+  $('delete-skill-select').value = catalog.byId.has(selectedForDeletion) ? selectedForDeletion : '';
   if (selectedSkill && !$('rank-skill').value) {
     if (rankingsUnsub) rankingsUnsub();
     rankingsUnsub = null;
@@ -927,6 +941,7 @@ onAuthStateChanged(auth, async user => {
   $('admin-management').hidden = true;
   $('questionnaire-editor').hidden = true;
   $('add-skill-card').hidden = true;
+  $('delete-skill-card').hidden = true;
   questionnaireDirty = false;
   $('questionnaire-editor-form').hidden = true;
   currentUser = user;
@@ -962,6 +977,7 @@ onAuthStateChanged(auth, async user => {
     $('admin-management').hidden = !isMasterAdmin;
     $('questionnaire-editor').hidden = !isMasterAdmin;
     $('add-skill-card').hidden = !isMasterAdmin;
+    $('delete-skill-card').hidden = false;
     if (isMasterAdmin) loadAdmins(generation);
     $('loading').hidden = true;
     $('access-message').hidden = true;
@@ -1248,6 +1264,21 @@ $('add-skill-form').addEventListener('submit', async event => {
     status('add-skill-message', 'Skill added to the applicant picker and rankings.');
   } catch (error) {
     status('add-skill-message', error.message || 'Could not add skill.', true);
+  } finally {
+    button.disabled = false;
+  }
+});
+
+$('delete-skill-button').addEventListener('click', async () => {
+  const skill = catalog.byId.get($('delete-skill-select').value);
+  if (!skill || !confirm(`Delete ${skill.name} from ${skill.category}? It will disappear from the applicant picker and active rankings. Past submissions will remain stored.`)) return;
+  const button = $('delete-skill-button');
+  button.disabled = true;
+  try {
+    await deleteSkill({ id: skill.id });
+    status('delete-skill-message', `${skill.name} deleted from the active skill list.`);
+  } catch (error) {
+    status('delete-skill-message', error.message || 'Could not delete skill.', true);
   } finally {
     button.disabled = false;
   }

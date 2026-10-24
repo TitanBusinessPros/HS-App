@@ -74,3 +74,14 @@
 .topic-edit-row button{margin-top:10px}
 .homestead-photo-editor{border-top:1px solid #e5ebe2;margin-top:30px;padding-top:24px}
 @media(max-width:700px){.topic-edit-row{grid-template-columns:1fr}.topic-edit-row button{justify-self:start;margin-top:0}}
+.interview-notice{margin-bottom:22px;border-color:#b8cfb4;background:#f8fcf5}
+.interview-notice h2{margin:8px 0 14px}
+.interview-notice p{margin-bottom:10px}
+.interview-admin-section{border-top:1px solid #e3e9df;margin-top:28px;padding-top:22px}
+.interview-admin-section h3{font-family:Fraunces,Georgia,serif;font-size:1.25rem}
+.interview-options{border:1px solid #dce5d9;border-radius:10px;margin:18px 0;padding:14px}
+.interview-options legend{font-weight:700;color:#234837;padding:0 5px}
+.interview-options label{display:flex;align-items:center;gap:8px;font-weight:400;margin:8px 0;cursor:pointer}
+.interview-options input[type=radio]{width:auto;padding:0;margin:0;box-shadow:none;accent-color:#234837}
+.interview-admin-section .review-row{align-items:center;margin-top:16px}
+.interview-admin-section .review-row .primary-button{margin-top:0}

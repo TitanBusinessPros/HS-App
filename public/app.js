@@ -185,6 +185,7 @@ function start() {
       currentProfile = snapshot.exists() ? snapshot.data() : null;
       const profile = currentProfile;
       $('profile-status').textContent = statusLabel(profile?.status || 'none');
+      renderInterview(profile?.interview);
       if (!profileInitialized) {
         $('profile-name').value = profile?.profile?.name || '';
         $('profile-location').value = profile?.profile?.location || '';
@@ -198,6 +199,30 @@ function start() {
       }
       if (pendingPhotos === null) renderPhotos();
     }, error => status('profile-message', readableError(error), true));
+  }
+  function renderInterview(interview) {
+    const date = interview?.scheduledAt?.toDate?.();
+    $('interview-notice').hidden = !date;
+    if (!date) return;
+    const label = ({ phone: 'Phone', 'in-person': 'In-person', zoom: 'Zoom' })[interview.mode] || 'Interview';
+    $('interview-heading').textContent = `${label} interview`;
+    $('interview-time').textContent = `Scheduled for ${date.toLocaleString(undefined, {
+      weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
+      hour: 'numeric', minute: '2-digit', timeZoneName: 'short'
+    })} in your time zone.`;
+    $('interview-admin').textContent = `Your contact: ${interview.contactAdminEmail || 'a Homesteader admin'}`;
+    $('interview-note').textContent = interview.note || '';
+    $('interview-note').hidden = !interview.note;
+    const meeting = $('interview-meeting-link');
+    try {
+      const link = normalizeExternalUrl(interview.meetingLink);
+      meeting.hidden = !link;
+      if (link) meeting.href = link;
+      else meeting.removeAttribute('href');
+    } catch {
+      meeting.hidden = true;
+      meeting.removeAttribute('href');
+    }
   }
   function updateWordCount() {
     const count = $('profile-bio').value.trim().split(/\s+/).filter(Boolean).length;
@@ -256,6 +281,9 @@ function start() {
       const opened = snapshot.exists();
       $('inbox-empty').hidden = opened;
       $('member-chat').hidden = !opened;
+      $('inbox-contact').hidden = !opened || !snapshot.data()?.contactAdminEmail;
+      $('inbox-contact').textContent = opened && snapshot.data()?.contactAdminEmail ?
+        `Your contact is ${snapshot.data().contactAdminEmail}. Homesteader admins can review this conversation.` : '';
       if (opened && !memberMessagesUnsub) {
         memberMessagesUnsub = onSnapshot(query(collection(db, 'conversations', uid, 'messages'), orderBy('createdAt', 'asc')), messages => renderMessages('member-messages', messages, uid), error => status('member-message-status', readableError(error), true));
       }

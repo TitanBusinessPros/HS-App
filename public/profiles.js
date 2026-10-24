@@ -17,6 +17,7 @@ const functions = getFunctions(app, 'us-west2');
 const sendMessage = httpsCallable(functions, 'sendMessage');
 const setReviewStatus = httpsCallable(functions, 'setReviewStatus');
 const manageApplicant = httpsCallable(functions, 'manageApplicant');
+const manageInterview = httpsCallable(functions, 'manageInterview');
 const addSkill = httpsCallable(functions, 'addSkill');
 const pageSize = 25;
 const nameCollator = new Intl.Collator(undefined, { sensitivity: 'base' });
@@ -24,6 +25,7 @@ let currentUser = null;
 let applicants = [];
 let blocked = new Map();
 let selectedUid = null;
+let selectedInterviewScheduled = false;
 let page = 0;
 let summariesUnsub = null;
 let blockedUnsub = null;
@@ -63,6 +65,7 @@ function cleanSelection() {
   for (const unsub of [profileUnsub, questionnaireUnsub, skillsUnsub, conversationUnsub, messagesUnsub]) if (unsub) unsub();
   profileUnsub = questionnaireUnsub = skillsUnsub = conversationUnsub = messagesUnsub = null;
   selectedUid = null;
+  selectedInterviewScheduled = false;
   selectedSkillData = null;
   photoPreview.hidden = true;
   $('detail-photos').replaceChildren();
@@ -106,7 +109,7 @@ function renderList() {
     const name = document.createElement('strong');
     name.textContent = person.name || 'Unnamed';
     const meta = document.createElement('span');
-    meta.textContent = `${person.email || ''} · ${blocked.has(person.uid) ? 'Blocked' : statusLabel(person.status)}${person.questionnaireCompletedAt ? ' · Questionnaire complete' : ''}`;
+    meta.textContent = `${person.email || ''} · ${blocked.has(person.uid) ? 'Blocked' : statusLabel(person.status)}${person.questionnaireCompletedAt ? ' · Questionnaire complete' : ''}${person.interviewMode ? ' · Interview invited' : ''}`;
     button.append(name, meta);
     button.addEventListener('click', () => selectApplicant(person.uid));
     list.append(button);
@@ -247,6 +250,32 @@ function renderProfile(person) {
   $('block-applicant').textContent = blocked.has(selectedUid) ? 'Unblock account' : 'Block account';
   $('save-review').disabled = blocked.has(selectedUid);
   $('admin-send').disabled = blocked.has(selectedUid);
+  renderInterviewEditor(person.interview);
+}
+
+function localDateTime(date) {
+  return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+}
+
+function toggleMeetingLink() {
+  const mode = document.querySelector('input[name="interview-mode"]:checked')?.value;
+  $('meeting-link-row').hidden = mode !== 'zoom';
+  if (mode !== 'zoom') $('interview-link').value = '';
+}
+
+function renderInterviewEditor(interview) {
+  const date = interview?.scheduledAt?.toDate?.();
+  selectedInterviewScheduled = Boolean(date);
+  $('current-interview').textContent = date ?
+    `${({ phone: 'Phone', 'in-person': 'In-person', zoom: 'Zoom' })[interview.mode] || 'Interview'} interview scheduled for ${date.toLocaleString()}. Contact: ${interview.contactAdminEmail || 'Homesteader admin'}.` :
+    'No interview scheduled.';
+  for (const radio of document.querySelectorAll('input[name="interview-mode"]')) radio.checked = radio.value === interview?.mode;
+  $('interview-date').value = date ? localDateTime(date) : '';
+  $('interview-note-input').value = interview?.note || '';
+  toggleMeetingLink();
+  $('interview-link').value = interview?.meetingLink || '';
+  $('schedule-interview').disabled = blocked.has(selectedUid);
+  $('cancel-interview').disabled = blocked.has(selectedUid) || !date;
 }
 
 function renderQuestionnaire(data) {
@@ -432,6 +461,8 @@ onAuthStateChanged(auth, async user => {
         $('block-applicant').textContent = blocked.has(selectedUid) ? 'Unblock account' : 'Block account';
         $('save-review').disabled = blocked.has(selectedUid);
         $('admin-send').disabled = blocked.has(selectedUid);
+        $('schedule-interview').disabled = blocked.has(selectedUid);
+        $('cancel-interview').disabled = blocked.has(selectedUid) || !selectedInterviewScheduled;
       }
     }, error => status('page-message', error.message || 'Could not load blocked accounts.', true));
   } catch (error) {
@@ -445,6 +476,48 @@ $('previous-page').addEventListener('click', () => { if (page > 0) { page--; ren
 $('next-page').addEventListener('click', () => { if ((page + 1) * pageSize < filteredApplicants().length) { page++; renderList(); } });
 $('rank-previous').addEventListener('click', () => { if (rankPage > 0) { rankPage--; renderRanking(); } });
 $('rank-next').addEventListener('click', () => { if ((rankPage + 1) * pageSize < rankedApplicants().length) { rankPage++; renderRanking(); } });
+
+for (const radio of document.querySelectorAll('input[name="interview-mode"]')) radio.addEventListener('change', toggleMeetingLink);
+$('interview-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  const uid = selectedUid;
+  const mode = document.querySelector('input[name="interview-mode"]:checked')?.value;
+  const when = new Date($('interview-date').value);
+  if (!uid || !mode || !Number.isFinite(when.getTime()) || when.getTime() <= Date.now()) {
+    return status('interview-message', 'Choose an interview type and a future date and time.', true);
+  }
+  let meetingLink = '';
+  try { meetingLink = mode === 'zoom' ? normalizeExternalUrl($('interview-link').value) : ''; }
+  catch (error) { return status('interview-message', error.message, true); }
+  const button = $('schedule-interview');
+  button.disabled = true;
+  try {
+    await manageInterview({
+      uid, action: 'schedule', mode, scheduledAt: when.toISOString(),
+      timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
+      note: $('interview-note-input').value.trim(), meetingLink
+    });
+    if (selectedUid === uid) status('interview-message', 'Invitation sent. The applicant can reply in their inbox.');
+  } catch (error) {
+    if (selectedUid === uid) status('interview-message', error.message || 'Could not send the interview invitation.', true);
+  } finally {
+    if (selectedUid === uid) button.disabled = blocked.has(uid);
+  }
+});
+$('cancel-interview').addEventListener('click', async () => {
+  const uid = selectedUid;
+  if (!uid) return;
+  const button = $('cancel-interview');
+  button.disabled = true;
+  try {
+    await manageInterview({ uid, action: 'cancel' });
+    if (selectedUid === uid) status('interview-message', 'Interview canceled. The applicant was notified in their inbox.');
+  } catch (error) {
+    if (selectedUid === uid) status('interview-message', error.message || 'Could not cancel the interview.', true);
+  } finally {
+    if (selectedUid === uid) button.disabled = blocked.has(uid) || !selectedInterviewScheduled;
+  }
+});
 
 $('add-skill-form').addEventListener('submit', async event => {
   event.preventDefault();

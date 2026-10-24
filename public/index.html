@@ -44,6 +44,12 @@
         <h1>Tell us about yourself.</h1>
         <p>Only you and Homesteader admins can see your information. You can return and update your introduction; photos can be changed once every 30 days.</p>
       </div>
+      <section id="interview-notice" class="card interview-notice" hidden>
+        <span class="eyebrow">Interview invitation</span><h2 id="interview-heading"></h2>
+        <p id="interview-time"></p><p id="interview-admin"></p><p id="interview-note" class="homestead-description" hidden></p>
+        <a id="interview-meeting-link" class="secondary-button button-link" target="_blank" rel="noopener noreferrer" hidden>Open Zoom meeting</a>
+        <p class="muted">Reply in your private inbox to confirm the date and time or ask the admin questions.</p>
+      </section>
       <div class="content-grid">
         <div class="card profile-card">
           <div class="section-heading"><h2>Your profile</h2><span id="profile-status" class="status-pill">Not submitted</span></div>
@@ -67,6 +73,7 @@
             <div id="photo-list" class="photo-list"></div>
             <input id="profile-photo" type="file" accept="image/jpeg,image/png,image/webp" multiple>
             <p id="photo-help" class="field-help">Up to 3 private photos. You can change the set once every 30 days. JPG, PNG, or WebP.</p>
+            <p class="field-help">New applications are limited to 500 active profiles. Existing applicants can still update their profiles.</p>
             <button id="save-profile" class="primary-button" type="submit">Save introduction</button>
             <p id="profile-message" class="message" role="status"></p>
           </form>
@@ -86,6 +93,7 @@
         </div>
         <aside class="card inbox-card">
           <div class="inbox-heading"><span class="inbox-icon" aria-hidden="true">✉</span><div><span class="eyebrow">Private conversation</span><h2>Inbox</h2></div></div>
+          <p id="inbox-contact" class="field-help" hidden></p>
           <p id="inbox-empty" class="muted">When an admin sends you a message, your conversation will appear here. You can reply then.</p>
           <div id="member-chat" hidden>
             <div id="member-messages" class="messages" aria-live="polite"></div>

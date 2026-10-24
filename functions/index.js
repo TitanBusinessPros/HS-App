@@ -16,6 +16,8 @@ const photoPattern = /^data:image\/jpeg;base64,([A-Za-z0-9+/]+={0,2})$/;
 const monthMs = 30 * 24 * 60 * 60 * 1000;
 const reviewStatuses = new Set(['submitted', 'reviewing', 'good-fit', 'declined']);
 const customSkillPattern = /^custom_[a-f0-9]{32}$/;
+const applicationLimit = 500;
+const applicationStatsRef = db.doc('applicationStats/main');
 
 function validSkillId(id) {
   return (Number.isInteger(id) && id >= 0 && id < 100) ||
@@ -117,6 +119,13 @@ function assertActive(transaction, uid) {
   });
 }
 
+async function applicantProfileCount(transaction, stats) {
+  const recorded = stats.data()?.profileCount;
+  if (Number.isInteger(recorded) && recorded >= 0) return recorded;
+  const existing = await transaction.get(db.collection('users').select());
+  return existing.size;
+}
+
 export const saveProfile = onCall(options, async request => {
   const user = caller(request);
   const data = cleanProfile(request.data);
@@ -128,12 +137,20 @@ export const saveProfile = onCall(options, async request => {
   await checkText(`${data.profile.name}\n${data.profile.location}\n${data.bio}\n${data.website}\n${data.socialLinks.join('\n')}`);
   if (newPhotos.length) await checkPhotos(newPhotos);
   const now = Timestamp.now();
-  await db.runTransaction(async transaction => {
+  const result = await db.runTransaction(async transaction => {
     await assertActive(transaction, user.uid);
-    const [admin, current] = await Promise.all([
-      transaction.get(db.doc(`admins/${user.uid}`)), transaction.get(account)
+    const [admin, current, stats] = await Promise.all([
+      transaction.get(db.doc(`admins/${user.uid}`)), transaction.get(account), transaction.get(applicationStatsRef)
     ]);
     if (admin.exists) throw new HttpsError('permission-denied', 'Admins do not need applicant profiles.');
+    if (!current.exists) {
+      const count = await applicantProfileCount(transaction, stats);
+      if (count >= applicationLimit) {
+        if (!stats.exists) transaction.set(applicationStatsRef, { profileCount: count, updatedAt: FieldValue.serverTimestamp() });
+        return { full: true };
+      }
+      transaction.set(applicationStatsRef, { profileCount: count + 1, updatedAt: FieldValue.serverTimestamp() });
+    }
     const before = current.data();
     const previousPhotos = before?.photos || (before?.photoDataUrl ? [before.photoDataUrl] : []);
     if (JSON.stringify(oldPhotos) !== JSON.stringify(previousPhotos)) {
@@ -161,6 +178,7 @@ export const saveProfile = onCall(options, async request => {
       updatedAt: now
     }, { merge: true });
   });
+  if (result?.full) throw new HttpsError('resource-exhausted', 'Applications are full at 500 profiles. Please try again after a place opens.');
   return { saved: true };
 });
 
@@ -183,8 +201,16 @@ export const sendMessage = onCall(options, async request => {
     const existing = await transaction.get(conversation);
     if (!isAdmin && !existing.exists) throw new HttpsError('permission-denied', 'An admin must start the conversation.');
     const message = conversation.collection('messages').doc();
-    if (!existing.exists) transaction.create(conversation, { participantUid: targetUid, openedBy: user.uid, openedAt: FieldValue.serverTimestamp(), firstMessageId: message.id });
-    transaction.create(message, { senderUid: user.uid, senderRole: isAdmin ? 'admin' : 'member', text, createdAt: FieldValue.serverTimestamp() });
+    if (!existing.exists) transaction.create(conversation, {
+      participantUid: targetUid, openedBy: user.uid, openedAt: FieldValue.serverTimestamp(),
+      firstMessageId: message.id, contactAdminUid: user.uid, contactAdminEmail: user.token.email || ''
+    });
+    else if (isAdmin) transaction.update(conversation, { contactAdminUid: user.uid, contactAdminEmail: user.token.email || '' });
+    transaction.create(message, {
+      senderUid: user.uid, senderRole: isAdmin ? 'admin' : 'member', text,
+      recipientAdminUid: isAdmin ? null : (existing.data()?.contactAdminUid || null),
+      createdAt: FieldValue.serverTimestamp()
+    });
   });
   return { sent: true };
 });
@@ -219,18 +245,22 @@ export const manageApplicant = onCall(options, async request => {
   if (typeof uid !== 'string' || !uid || uid.includes('/') || uid === user.uid || !['block', 'delete', 'unblock'].includes(action)) invalid('Choose an applicant and an action.');
   await db.runTransaction(async transaction => {
     await assertActive(transaction, user.uid);
-    const [admin, targetAdmin, profile, skillRecord] = await Promise.all([
+    const [admin, targetAdmin, profile, skillRecord, stats] = await Promise.all([
       transaction.get(db.doc(`admins/${user.uid}`)),
       transaction.get(db.doc(`admins/${uid}`)),
       transaction.get(db.doc(`users/${uid}`)),
-      transaction.get(db.doc(`skills/${uid}`))
+      transaction.get(db.doc(`skills/${uid}`)),
+      transaction.get(applicationStatsRef)
     ]);
     if (!admin.exists || targetAdmin.exists) throw new HttpsError('permission-denied', 'Admin access required.');
+    const nextCount = action === 'delete' && profile.exists ?
+      Math.max(0, (await applicantProfileCount(transaction, stats)) - 1) : null;
     const blocked = db.doc(`blockedUsers/${uid}`);
     if (action === 'unblock') transaction.delete(blocked);
     else {
       transaction.set(blocked, { email: profile.data()?.email || '', blockedBy: user.uid, blockedAt: FieldValue.serverTimestamp() });
       if (action === 'delete') {
+        if (nextCount !== null) transaction.set(applicationStatsRef, { profileCount: nextCount, updatedAt: FieldValue.serverTimestamp() });
         if (profile.exists) transaction.delete(profile.ref);
         transaction.delete(db.doc(`applicantSummaries/${uid}`));
         transaction.delete(db.doc(`questionnaires/${uid}`));
@@ -281,6 +311,81 @@ export const saveQuestionnaire = onCall(options, async request => {
       status: profile.data().status || 'submitted',
       questionnaireCompletedAt: FieldValue.serverTimestamp()
     }, { merge: true });
+  });
+  return { saved: true };
+});
+
+export const manageInterview = onCall(options, async request => {
+  const user = caller(request);
+  const uid = request.data?.uid;
+  const action = request.data?.action;
+  if (typeof uid !== 'string' || !uid || uid.includes('/') || uid === user.uid ||
+      !['schedule', 'cancel'].includes(action)) invalid('Choose an applicant and an interview action.');
+  await assertAdmin(user.uid);
+  let interview = null;
+  let invitation = '';
+  if (action === 'schedule') {
+    const mode = request.data?.mode;
+    const modeLabel = new Map([['phone', 'phone'], ['in-person', 'in-person'], ['zoom', 'Zoom']]).get(mode);
+    const rawTime = request.data?.scheduledAt;
+    const date = typeof rawTime === 'string' ? new Date(rawTime) : new Date(NaN);
+    const timeZone = typeof request.data?.timeZone === 'string' ? request.data.timeZone : 'UTC';
+    const note = typeof request.data?.note === 'string' ? request.data.note.trim() : '';
+    const meetingLink = cleanExternalUrl(request.data?.meetingLink);
+    if (!modeLabel || !Number.isFinite(date.getTime()) || date.getTime() <= Date.now() ||
+        date.getTime() > Date.now() + 365 * 24 * 60 * 60 * 1000 ||
+        timeZone.length > 64 || note.length > 1000 || (mode !== 'zoom' && meetingLink)) {
+      invalid('Choose an interview type and a future date and time.');
+    }
+    let formatted;
+    try {
+      formatted = new Intl.DateTimeFormat('en-US', { dateStyle: 'full', timeStyle: 'short', timeZone }).format(date);
+    } catch {
+      invalid('Choose a valid time zone.');
+    }
+    if (note) await checkText(note);
+    const contactEmail = user.token.email || 'a Homesteader admin';
+    interview = {
+      mode, scheduledAt: Timestamp.fromDate(date), timeZone, note, meetingLink,
+      contactAdminUid: user.uid, contactAdminEmail: contactEmail, updatedAt: FieldValue.serverTimestamp()
+    };
+    invitation = `You are invited to a ${modeLabel} interview on ${formatted} (${timeZone}). ` +
+      `${contactEmail} is your contact. Reply here to confirm the date and time or ask questions.` +
+      (meetingLink ? `\nZoom link: ${meetingLink}` : '') + (note ? `\n${note}` : '');
+  }
+  await db.runTransaction(async transaction => {
+    await assertActive(transaction, user.uid);
+    const [admin, blocked, applicant] = await Promise.all([
+      transaction.get(db.doc(`admins/${user.uid}`)),
+      transaction.get(db.doc(`blockedUsers/${uid}`)),
+      transaction.get(db.doc(`users/${uid}`))
+    ]);
+    if (!admin.exists) throw new HttpsError('permission-denied', 'Admin access required.');
+    if (blocked.exists || !applicant.exists) throw new HttpsError('failed-precondition', 'This applicant is unavailable.');
+    if (action === 'cancel' && !applicant.data().interview) throw new HttpsError('failed-precondition', 'No interview is scheduled.');
+    const conversation = db.doc(`conversations/${uid}`);
+    const existing = await transaction.get(conversation);
+    const message = conversation.collection('messages').doc();
+    if (action === 'cancel') {
+      const previous = applicant.data().interview;
+      const label = ({ phone: 'phone', 'in-person': 'in-person', zoom: 'Zoom' })[previous.mode] || 'scheduled';
+      invitation = `The ${label} interview has been canceled. Reply here if you have questions about the date or time.`;
+      transaction.update(applicant.ref, { interview: FieldValue.delete() });
+      transaction.set(db.doc(`applicantSummaries/${uid}`), {
+        interviewMode: FieldValue.delete(), interviewAt: FieldValue.delete()
+      }, { merge: true });
+    } else {
+      transaction.update(applicant.ref, { interview });
+      transaction.set(db.doc(`applicantSummaries/${uid}`), {
+        interviewMode: interview.mode, interviewAt: interview.scheduledAt
+      }, { merge: true });
+    }
+    if (!existing.exists) transaction.create(conversation, {
+      participantUid: uid, openedBy: user.uid, openedAt: FieldValue.serverTimestamp(),
+      firstMessageId: message.id, contactAdminUid: user.uid, contactAdminEmail: user.token.email || ''
+    });
+    else transaction.update(conversation, { contactAdminUid: user.uid, contactAdminEmail: user.token.email || '' });
+    transaction.create(message, { senderUid: user.uid, senderRole: 'admin', text: invitation, createdAt: FieldValue.serverTimestamp() });
   });
   return { saved: true };
 });

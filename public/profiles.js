@@ -72,6 +72,9 @@ let selectedSkillData = null;
 let rankings = [];
 let rankPage = 0;
 let authGeneration = 0;
+const linkedApplicantUid = new URLSearchParams(location.search).get('applicant');
+let linkedApplicantOpened = false;
+let linkedApplicantScrolled = false;
 
 const photoPreview = document.createElement('img');
 photoPreview.className = 'photo-hover-preview';
@@ -434,6 +437,10 @@ window.addEventListener('resize', () => { photoPreview.hidden = true; });
 function renderProfile(person) {
   $('admin-detail-empty').hidden = true;
   $('admin-detail').hidden = false;
+  if (selectedUid === linkedApplicantUid && !linkedApplicantScrolled) {
+    linkedApplicantScrolled = true;
+    requestAnimationFrame(() => $('admin-detail').scrollIntoView({ block: 'start' }));
+  }
   $('detail-name').textContent = person.profile?.name || 'Unnamed';
   $('roster-applicant-name').textContent = person.profile?.name || 'this applicant';
   $('detail-status').textContent = blocked.has(selectedUid) ? 'Blocked' : statusLabel(person.status);
@@ -912,6 +919,8 @@ onAuthStateChanged(auth, async user => {
   clearTimeout(initialAuthTimer);
   const generation = ++authGeneration;
   cleanSubscriptions();
+  linkedApplicantOpened = false;
+  linkedApplicantScrolled = false;
   isMasterAdmin = false;
   calendarReady = false;
   calendarInterviewSignature = null;
@@ -999,6 +1008,10 @@ onAuthStateChanged(auth, async user => {
       calendarInterviewSignature = nextSignature;
       if (selectedUid && !applicants.some(person => person.uid === selectedUid)) cleanSelection();
       renderList();
+      if (linkedApplicantUid && !linkedApplicantOpened && applicants.some(person => person.uid === linkedApplicantUid)) {
+        linkedApplicantOpened = true;
+        selectApplicant(linkedApplicantUid);
+      }
       renderRanking();
       renderTeamMembers();
       if (selectedUid) renderApplicantTeams();

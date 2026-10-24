@@ -44,8 +44,19 @@ function start() {
   let questionnaireSaved = null;
   let questionnaireSettings = null;
   let skillsUnsub = null;
+  let rosterTeamsUnsub = null;
+  let rosterSummariesUnsub = null;
+  let rosterMemberUnsubs = new Map();
+  let rosterTeams = [];
+  let rosterMembers = new Map();
+  let rosterMemberErrors = new Map();
+  let rosterSummaries = new Map();
+  let rosterSummariesReady = false;
+  let rosterTeamsReady = false;
+  let rosterError = '';
   let authGeneration = 0;
   let shownBookingInvite = '';
+  const rosterCollator = new Intl.Collator(undefined, { sensitivity: 'base' });
   const photoPreview = document.createElement('img');
   photoPreview.className = 'photo-hover-preview';
   photoPreview.alt = '';
@@ -93,8 +104,115 @@ function start() {
     document.body.classList.remove('app-loading');
   }
   function cleanSubscriptions() {
-    for (const unsub of [memberConversationUnsub, profileUnsub, questionnaireUnsub, questionnaireConfigUnsub, skillsUnsub]) if (unsub) unsub();
-    memberConversationUnsub = profileUnsub = questionnaireUnsub = questionnaireConfigUnsub = skillsUnsub = null;
+    for (const unsub of [memberConversationUnsub, profileUnsub, questionnaireUnsub, questionnaireConfigUnsub, skillsUnsub, rosterTeamsUnsub, rosterSummariesUnsub]) if (unsub) unsub();
+    for (const unsub of rosterMemberUnsubs.values()) unsub();
+    memberConversationUnsub = profileUnsub = questionnaireUnsub = questionnaireConfigUnsub = skillsUnsub = rosterTeamsUnsub = rosterSummariesUnsub = null;
+    rosterMemberUnsubs = new Map();
+    rosterTeams = [];
+    rosterMembers = new Map();
+    rosterMemberErrors = new Map();
+    rosterSummaries = new Map();
+    rosterSummariesReady = false;
+    rosterTeamsReady = false;
+    rosterError = '';
+    $('admin-team-grid').replaceChildren();
+    status('admin-roster-status', 'Loading teams...');
+  }
+  function renderAdminRoster() {
+    const grid = $('admin-team-grid');
+    grid.replaceChildren();
+    status('admin-roster-status', rosterError || (!rosterTeamsReady ? 'Loading teams...' :
+      rosterTeams.length ? '' : 'No teams yet. Create a team from an applicant profile.'), Boolean(rosterError));
+    for (const team of rosterTeams) {
+      const card = document.createElement('article');
+      card.className = 'admin-team-card';
+      const title = document.createElement('h3');
+      title.textContent = team.name || 'Unnamed team';
+      const count = document.createElement('p');
+      count.className = 'admin-team-count';
+      const ids = rosterMembers.get(team.id);
+      count.textContent = ids ? `${ids.length} ${ids.length === 1 ? 'applicant' : 'applicants'}` :
+        rosterMemberErrors.get(team.id) || 'Loading members...';
+      card.append(title, count);
+      if (ids?.length) {
+        const list = document.createElement('ul');
+        list.className = 'admin-team-members';
+        const sorted = [...ids].sort((a, b) => rosterCollator.compare(
+          rosterSummaries.get(a)?.name || '', rosterSummaries.get(b)?.name || ''));
+        for (const uid of sorted) {
+          const item = document.createElement('li');
+          const person = rosterSummaries.get(uid);
+          if (person) {
+            const link = document.createElement('a');
+            link.className = 'admin-team-member';
+            link.href = `profiles.html?applicant=${encodeURIComponent(uid)}`;
+            const name = document.createElement('strong');
+            name.textContent = person.name || 'Unnamed applicant';
+            const detail = document.createElement('span');
+            detail.textContent = person.email || person.location || 'Open private profile';
+            link.append(name, detail);
+            item.append(link);
+          } else {
+            item.className = 'admin-team-member';
+            item.textContent = rosterSummariesReady ? 'Applicant information unavailable' : 'Loading applicant name...';
+          }
+          list.append(item);
+        }
+        card.append(list);
+      } else if (ids) {
+        const empty = document.createElement('p');
+        empty.className = 'admin-team-empty';
+        empty.textContent = 'No applicants on this team yet.';
+        card.append(empty);
+      }
+      grid.append(card);
+    }
+  }
+  function watchAdminRoster(generation) {
+    rosterSummariesUnsub = onSnapshot(collection(db, 'applicantSummaries'), snapshot => {
+      if (generation !== authGeneration) return;
+      rosterSummaries = new Map(snapshot.docs.map(item => [item.id, item.data()]));
+      rosterSummariesReady = true;
+      renderAdminRoster();
+    }, error => {
+      if (generation !== authGeneration) return;
+      rosterError = error.message || 'Could not load applicant names.';
+      rosterSummariesReady = true;
+      renderAdminRoster();
+    });
+    rosterTeamsUnsub = onSnapshot(collection(db, 'teams'), snapshot => {
+      if (generation !== authGeneration) return;
+      rosterTeams = snapshot.docs.map(item => ({ id: item.id, ...item.data() }))
+        .sort((a, b) => rosterCollator.compare(a.name || '', b.name || ''));
+      rosterTeamsReady = true;
+      const currentIds = new Set(rosterTeams.map(team => team.id));
+      for (const [teamId, unsub] of rosterMemberUnsubs) {
+        if (currentIds.has(teamId)) continue;
+        unsub();
+        rosterMemberUnsubs.delete(teamId);
+        rosterMembers.delete(teamId);
+        rosterMemberErrors.delete(teamId);
+      }
+      for (const team of rosterTeams) {
+        if (rosterMemberUnsubs.has(team.id)) continue;
+        const unsub = onSnapshot(collection(db, 'teams', team.id, 'members'), members => {
+          if (generation !== authGeneration) return;
+          rosterMembers.set(team.id, members.docs.map(item => item.id));
+          rosterMemberErrors.delete(team.id);
+          renderAdminRoster();
+        }, error => {
+          if (generation !== authGeneration) return;
+          rosterMemberErrors.set(team.id, error.message || 'Could not load members.');
+          renderAdminRoster();
+        });
+        rosterMemberUnsubs.set(team.id, unsub);
+      }
+      renderAdminRoster();
+    }, error => {
+      if (generation !== authGeneration) return;
+      rosterError = error.message || 'Could not load teams.';
+      renderAdminRoster();
+    });
   }
   function updateQuestionnaireStatus() {
     if (!questionnaireSaved) {
@@ -156,6 +274,7 @@ function start() {
         $('admin-homestead-link').textContent = user.email?.toLowerCase() === 'titanbusinesspros@gmail.com' ?
           'Edit homestead page' : 'View homestead page';
         showView('admin-view');
+        watchAdminRoster(generation);
       } else {
         await sanitizeMyContactsCall();
         if (generation !== authGeneration) return;

@@ -105,8 +105,21 @@
 .brand-logo{display:block;width:186px;height:186px;object-fit:contain;animation:brand-float 3.5s ease-in-out infinite}
 @keyframes brand-float{0%,100%{transform:translateY(0)}50%{transform:translateY(-10px)}}
 @media(prefers-reduced-motion:reduce){.brand-logo{animation:none}}
-#admin-view{text-align:center}
+#admin-view{text-align:center;max-width:1080px;margin:36px auto}
 #admin-view .button-link{margin:8px 5px 0}
+.admin-roster{margin-top:38px;padding-top:30px;border-top:1px solid #e2e9df}
+.admin-roster>p{max-width:700px;margin-left:auto;margin-right:auto}
+.admin-team-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,290px),1fr));gap:18px;margin-top:22px;text-align:left}
+.admin-team-card{min-width:0;padding:20px;border:1px solid #d6e1d2;border-radius:14px;background:#f9fbf7}
+.admin-team-card h3{font-family:Fraunces,Georgia,serif;font-size:1.25rem;margin:0;text-align:center;overflow-wrap:anywhere}
+.admin-team-count{text-align:center;color:#627567;font-size:.85rem;margin:5px 0 16px}
+.admin-team-members{list-style:none;padding:0;margin:0;display:grid;gap:8px;max-height:360px;overflow:auto}
+.admin-team-member{display:block;padding:11px 13px;border:1px solid #dce6d8;border-radius:9px;background:#fff;color:#234837;text-decoration:none;overflow-wrap:anywhere}
+.admin-team-member:hover{background:#eef5eb;border-color:#9ab99b}
+.admin-team-member strong,.admin-team-member span{display:block}
+.admin-team-member span{font-size:.8rem;color:#627567;margin-top:2px}
+.admin-team-empty{text-align:center;color:#68776a;margin:0}
+@media(max-width:520px){#admin-view{padding:24px 16px}}
 @media(max-width:700px){.brand-logo{width:162px;height:162px}}
 body{display:flex;flex-direction:column}
 main{width:100%;flex:1}

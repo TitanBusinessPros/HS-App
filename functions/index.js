@@ -7,6 +7,7 @@ import language from '@google-cloud/language';
 import { createHash } from 'node:crypto';
 import { createCalendarBooking, bookingLockRefs, calendarRevisionRef, intervalsOverlap } from './calendar-booking.js';
 import { normalizeAdminEmail, verifiedGoogleEmail } from './admin-invite.js';
+import { mergeSharedSkillEntries } from './shared-ranking.js';
 
 initializeApp();
 const db = getFirestore();
@@ -1331,6 +1332,57 @@ export const saveSkills = onCall({ ...options, timeoutSeconds: 120 }, async requ
     }, { merge: true });
   });
   return { saved: true };
+});
+
+export const listSharedSkillRanking = onCall({ ...options, timeoutSeconds: 120 }, async request => {
+  const user = caller(request);
+  const { companyId } = await companyAdmin(user);
+  const rawSkillId = request.data?.skillId;
+  const skillId = typeof rawSkillId === 'string' && /^(?:[0-9]|[1-9][0-9])$/.test(rawSkillId) ?
+    Number(rawSkillId) : rawSkillId;
+  if (!validSkillId(skillId)) invalid('Choose a skill.');
+  const catalogEntry = await companyDoc(companyId, `skillCatalog/${skillId}`).get();
+  if (catalogEntry.data()?.deleted === true || (typeof skillId === 'string' && !catalogEntry.exists)) {
+    throw new HttpsError('not-found', 'This skill is not available at your company.');
+  }
+
+  const companyDocs = await db.collection('companies').select().get();
+  const sourceIds = [primaryCompanyId, ...companyDocs.docs.map(document => document.id)];
+  const sources = [];
+  for (let start = 0; start < sourceIds.length; start += 10) {
+    const batch = sourceIds.slice(start, start + 10);
+    const snapshots = await Promise.all(batch.map(id =>
+      companyCollection(id, `skillRankings/${skillId}/applicants`).orderBy('years', 'desc').limit(26).get()
+    ));
+    snapshots.forEach((snapshot, index) => sources.push({
+      companyId: batch[index],
+      entries: snapshot.docs.map(document => ({ uid: document.id,
+        years: document.data().years, organization: document.data().organization || '' }))
+    }));
+  }
+  const candidates = mergeSharedSkillEntries(sources, companyId);
+  const verified = [];
+  for (let start = 0; start < candidates.length && verified.length < 26; start += 25) {
+    const batch = candidates.slice(start, start + 25);
+    const refs = [
+      ...batch.map(entry => db.doc(`users/${entry.uid}`)),
+      ...batch.map(entry => db.doc(`blockedUsers/${entry.uid}`)),
+      ...(companyId === primaryCompanyId ? [] : batch.map(entry => companyDoc(companyId, `blockedApplicants/${entry.uid}`)))
+    ];
+    const snapshots = await db.getAll(...refs);
+    for (let index = 0; index < batch.length; index++) {
+      const profile = snapshots[index];
+      if (!profile.exists || snapshots[index + batch.length].exists ||
+          (companyId !== primaryCompanyId && snapshots[index + 2 * batch.length].exists)) continue;
+      const entry = batch[index];
+      verified.push({ uid: entry.uid, years: entry.years, organization: entry.organization,
+        name: profile.data().profile?.name || 'Unnamed', email: profile.data().email || '',
+        sourceCompany: entry.sourceCompanyId === primaryCompanyId ? 'Titan Business Pros' :
+          entry.sourceCompanyId === companyId ? 'your company' : 'another homestead company' });
+    }
+  }
+  verified.sort((a, b) => b.years - a.years || a.name.localeCompare(b.name) || a.uid.localeCompare(b.uid));
+  return { rankings: verified.slice(0, 25), hasMore: verified.length > 25 };
 });
 
 function cleanHomesteadPage(value) {

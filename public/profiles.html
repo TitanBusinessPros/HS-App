@@ -123,12 +123,12 @@
       </section>
       <section id="skill-rankings" class="card skill-ranking-card">
         <div class="section-heading"><h2>Rank applicants by skill</h2><span id="skill-rank-count" class="count">0</span></div>
-        <p class="muted">Choose a skill to see the top 10 applicants by reported years of experience, with an option to view up to 25. Organization details are supplied by applicants and should be checked with them.</p>
+        <p class="muted">Search reported skills from applicants across homestead companies. See the top 10 by years of experience, with an option to view up to 25. Organization details are supplied by applicants and should be checked with them.</p>
         <label for="rank-skill">Choose a skill</label><select id="rank-skill"><option value="">Choose a skill</option></select>
         <p id="rank-summary" class="field-help" hidden></p>
         <div id="rank-list" class="rank-list"></div>
         <p id="rank-empty" class="muted">Choose a skill to see its ranking.</p>
-        <div class="ranking-controls"><button id="rank-show-more" class="text-button" type="button" aria-controls="rank-list" aria-expanded="false" hidden>View top 25</button></div>
+        <div class="ranking-controls"><button id="rank-show-more" class="text-button" type="button" aria-controls="rank-list" aria-expanded="false" hidden>View top 25</button><button id="refresh-rankings" class="text-button" type="button" hidden>Refresh rankings</button></div>
       </section>
       <div class="admin-grid">
         <aside class="card applicant-list-card">
@@ -181,6 +181,7 @@
             <div class="detail-label">Introduction</div><p id="detail-bio" class="detail-bio"></p>
             <div id="detail-links" class="profile-links"></div>
             <details id="questionnaire-results" class="questionnaire-results"><summary id="questionnaire-summary">Questionnaire: not completed</summary><div id="questionnaire-answers"></div></details>
+            <p id="shared-qualification-note" class="field-help" hidden></p>
             <details id="applicant-skills" class="questionnaire-results"><summary id="applicant-skills-summary">Skills: none added</summary><div id="applicant-skills-list"></div></details>
             <div class="interview-admin-section">
               <h3>Interview invitation</h3><p id="current-interview" class="muted">No interview scheduled.</p>

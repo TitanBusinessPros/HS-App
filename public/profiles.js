@@ -38,6 +38,7 @@ const revokeBookingInvite = httpsCallable(functions, 'revokeBookingInvite');
 const cancelCalendarInterview = httpsCallable(functions, 'cancelCalendarInterview');
 const claimCompanyEmail = httpsCallable(functions, 'claimCompanyEmail');
 const getSharedApplicantProfile = httpsCallable(functions, 'getSharedApplicantProfile');
+const listSharedSkillRanking = httpsCallable(functions, 'listSharedSkillRanking', { timeout: 120000 });
 const masterAdminEmail = 'titanbusinesspros@gmail.com';
 const pageSize = 25;
 const nameCollator = new Intl.Collator(undefined, { sensitivity: 'base' });
@@ -66,7 +67,6 @@ let questionnaireUnsub = null;
 let skillsUnsub = null;
 let conversationUnsub = null;
 let messagesUnsub = null;
-let rankingsUnsub = null;
 let teamsUnsub = null;
 let teamMembersUnsub = null;
 let teams = [];
@@ -86,6 +86,10 @@ let catalog = buildSkillCatalog();
 let selectedSkillData = null;
 let rankings = [];
 let rankLimit = 10;
+let rankHasMore = false;
+let rankLoading = false;
+let rankRequestGeneration = 0;
+let selectedRankEntry = null;
 let authGeneration = 0;
 const linkedApplicantUid = new URLSearchParams(location.search).get('applicant');
 let linkedApplicantOpened = false;
@@ -135,6 +139,7 @@ function cleanSelection() {
   selectedInterviewScheduled = false;
   selectedInterviewSource = '';
   selectedSkillData = null;
+  selectedRankEntry = null;
   photoPreview.hidden = true;
   $('detail-photos').replaceChildren();
   $('admin-messages').replaceChildren();
@@ -146,8 +151,11 @@ function cleanSelection() {
 
 function cleanSubscriptions() {
   cleanSelection();
-  for (const unsub of [summariesUnsub, companySummariesUnsub, blockedUnsub, rankingsUnsub, catalogUnsub, questionnaireConfigUnsub, teamsUnsub, teamMembersUnsub]) if (unsub) unsub();
-  summariesUnsub = companySummariesUnsub = blockedUnsub = rankingsUnsub = catalogUnsub = questionnaireConfigUnsub = teamsUnsub = teamMembersUnsub = null;
+  for (const unsub of [summariesUnsub, companySummariesUnsub, blockedUnsub, catalogUnsub, questionnaireConfigUnsub, teamsUnsub, teamMembersUnsub]) if (unsub) unsub();
+  summariesUnsub = companySummariesUnsub = blockedUnsub = catalogUnsub = questionnaireConfigUnsub = teamsUnsub = teamMembersUnsub = null;
+  ++rankRequestGeneration;
+  rankLoading = false;
+  rankHasMore = false;
   directory = new Map();
   companySummaries = new Map();
   rankings = [];
@@ -195,40 +203,38 @@ function renderList() {
 }
 
 function rankedApplicants() {
-  const byUid = new Map(applicants.map(person => [person.uid, person]));
-  return rankings.filter(entry => byUid.has(entry.uid) && !blocked.has(entry.uid))
-    .sort((a, b) => b.years - a.years ||
-      nameCollator.compare(byUid.get(a.uid).name || '', byUid.get(b.uid).name || ''));
+  return rankings.filter(entry => !blocked.has(entry.uid))
+    .sort((a, b) => b.years - a.years || nameCollator.compare(a.name || '', b.name || ''));
 }
 
 function renderRanking() {
   const sorted = rankedApplicants();
   if (sorted.length <= 10) rankLimit = 10;
-  const byUid = new Map(applicants.map(person => [person.uid, person]));
-  $('skill-rank-count').textContent = String(sorted.length);
+  $('skill-rank-count').textContent = rankHasMore ? '25+' : String(sorted.length);
   const shown = sorted.slice(0, rankLimit);
   $('rank-summary').hidden = !sorted.length;
-  $('rank-summary').textContent = sorted.length ? `Showing top ${shown.length} of ${sorted.length} applicants.` : '';
+  $('rank-summary').textContent = sorted.length ?
+    `Showing top ${shown.length}${rankHasMore ? ' of more than 25' : ` of ${sorted.length}`} qualified applicants across homestead companies.` : '';
   $('rank-show-more').hidden = sorted.length <= 10;
   $('rank-show-more').setAttribute('aria-expanded', String(rankLimit === 25));
   $('rank-show-more').textContent = rankLimit === 10 ?
     `View top ${Math.min(25, sorted.length)}` : 'Show top 10';
   $('rank-empty').hidden = sorted.length > 0;
-  $('rank-empty').textContent = $('rank-skill').value ? 'No applicants have reported this skill yet.' : 'Choose a skill to see its ranking.';
+  $('rank-empty').textContent = rankLoading ? 'Loading skill rankings...' :
+    $('rank-skill').value ? 'No applicants have reported this skill yet.' : 'Choose a skill to see its ranking.';
   const list = $('rank-list');
   list.replaceChildren();
   shown.forEach((entry, index) => {
-    const person = byUid.get(entry.uid);
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'rank-row';
     const heading = document.createElement('strong');
-    heading.textContent = `${index + 1}. ${person.name || 'Unnamed'} — ${entry.years} ${entry.years === 1 ? 'year' : 'years'}`;
+    heading.textContent = `${index + 1}. ${entry.name || 'Unnamed'} — ${entry.years} ${entry.years === 1 ? 'year' : 'years'}`;
     const detail = document.createElement('span');
-    detail.textContent = `${entry.organization} · ${person.email || ''}`;
+    detail.textContent = `${entry.organization || 'Organization not provided'} · ${entry.email || ''} · Reported at ${entry.sourceCompany}`;
     button.append(heading, detail);
     button.addEventListener('click', () => {
-      selectApplicant(entry.uid);
+      selectApplicant(entry.uid, entry);
       $('admin-detail').scrollIntoView({ behavior: 'smooth', block: 'start' });
     });
     list.append(button);
@@ -469,6 +475,7 @@ function renderProfile(person) {
   $('detail-email').textContent = person.email || '';
   $('detail-location').textContent = person.profile?.location ? `Location: ${person.profile.location}` : 'Location not provided';
   $('detail-bio').textContent = person.bio || 'No introduction yet.';
+  renderSharedQualificationNote();
   const links = $('detail-links');
   links.replaceChildren();
   for (const [label, raw] of [
@@ -505,6 +512,13 @@ function renderProfile(person) {
   $('admin-send').disabled = blocked.has(selectedUid);
   renderInterviewEditor(person.interview);
   renderBookingInviteEditor(person.bookingInvite, person.interview);
+}
+
+function renderSharedQualificationNote() {
+  const note = $('shared-qualification-note');
+  note.hidden = !selectedRankEntry || selectedRankEntry.uid !== selectedUid;
+  note.textContent = note.hidden ? '' :
+    `Shared skill report: ${catalog.byId.get(String($('rank-skill').value))?.name || 'Selected skill'} — ${selectedRankEntry.years} ${selectedRankEntry.years === 1 ? 'year' : 'years'}; ${selectedRankEntry.organization || 'organization not provided'}; reported at ${selectedRankEntry.sourceCompany}. The skill list below shows submissions to this company.`;
 }
 
 function localDateTime(date) {
@@ -847,7 +861,8 @@ $('questionnaire-editor-form').addEventListener('submit', async event => {
 function renderApplicantSkills(data) {
   const entries = data?.version === 1 && Array.isArray(data.entries) ?
     data.entries.filter(entry => catalog.byId.has(String(entry.id))) : [];
-  $('applicant-skills-summary').textContent = entries.length ? `Skills: ${entries.length} selected` : 'Skills: none added';
+  $('applicant-skills-summary').textContent = entries.length ?
+    `Skills submitted to this company: ${entries.length}` : 'Skills submitted to this company: none';
   const list = $('applicant-skills-list');
   list.replaceChildren();
   [...entries].sort((a, b) => b.years - a.years ||
@@ -885,10 +900,15 @@ function renderMessages(snapshot) {
   list.scrollTop = list.scrollHeight;
 }
 
-function selectApplicant(uid) {
-  if (uid === selectedUid) return;
+function selectApplicant(uid, rankEntry = null) {
+  if (uid === selectedUid) {
+    selectedRankEntry = rankEntry;
+    renderSharedQualificationNote();
+    return;
+  }
   cleanSelection();
   selectedUid = uid;
+  selectedRankEntry = rankEntry;
   syncApplicantTeamListeners();
   renderList();
   const selected = uid;
@@ -965,10 +985,12 @@ function renderSkillCatalog() {
   $('rank-skill').value = catalog.byId.has(selectedSkill) ? selectedSkill : '';
   $('delete-skill-select').value = catalog.byId.has(selectedForDeletion) ? selectedForDeletion : '';
   if (selectedSkill && !$('rank-skill').value) {
-    if (rankingsUnsub) rankingsUnsub();
-    rankingsUnsub = null;
+    ++rankRequestGeneration;
     rankings = [];
+    rankHasMore = false;
+    rankLoading = false;
     rankLimit = 10;
+    $('refresh-rankings').hidden = true;
     renderRanking();
   }
   if (selectedUid) renderApplicantSkills(selectedSkillData);
@@ -980,18 +1002,40 @@ const initialAuthTimer = setTimeout(() => {
   if (!$('loading').hidden) showAccess('Sign-in is taking too long. Check your connection and try again.', true);
 }, 15000);
 
-$('rank-skill').addEventListener('change', () => {
-  if (rankingsUnsub) rankingsUnsub();
-  rankingsUnsub = null;
+async function loadSharedRanking() {
+  const skillId = $('rank-skill').value;
+  const requestGeneration = ++rankRequestGeneration;
+  const currentAuthGeneration = authGeneration;
   rankings = [];
+  rankHasMore = false;
   rankLimit = 10;
+  rankLoading = Boolean(skillId);
+  $('refresh-rankings').hidden = !skillId;
+  $('refresh-rankings').disabled = Boolean(skillId);
   renderRanking();
-  const id = $('rank-skill').value;
-  if (id === '') return;
-  rankingsUnsub = onSnapshot(scopedCollection('skillRankings', id, 'applicants'), snapshot => {
-    rankings = snapshot.docs.map(item => ({ uid: item.id, ...item.data() }));
+  if (!skillId) return;
+  try {
+    const { data } = await listSharedSkillRanking({ skillId });
+    if (requestGeneration !== rankRequestGeneration || currentAuthGeneration !== authGeneration ||
+        skillId !== $('rank-skill').value) return;
+    rankings = data.rankings || [];
+    rankHasMore = data.hasMore === true;
+    rankLoading = false;
     renderRanking();
-  }, error => status('page-message', error.message || 'Could not load skill rankings.', true));
+  } catch (error) {
+    if (requestGeneration !== rankRequestGeneration) return;
+    rankLoading = false;
+    renderRanking();
+    status('page-message', error.message || 'Could not load skill rankings.', true);
+  } finally {
+    if (requestGeneration === rankRequestGeneration) $('refresh-rankings').disabled = false;
+  }
+}
+
+$('rank-skill').addEventListener('change', loadSharedRanking);
+$('refresh-rankings').addEventListener('click', loadSharedRanking);
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && $('rank-skill').value && !$('profiles-view').hidden) loadSharedRanking();
 });
 
 onAuthStateChanged(auth, async user => {

@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#234837">
+  <meta name="app-version" content="local">
+  <meta name="robots" content="noindex,nofollow">
+  <title>Company Accounts | Homesteader</title>
+  <link rel="icon" href="favicon.ico" sizes="any">
+  <link rel="icon" type="image/png" sizes="96x96" href="icons/favicon-96x96.png">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="site-header">
+    <a class="brand" href="./" aria-label="Homesteader home"><img class="brand-logo" src="icons/icon-512.png" alt="" width="186" height="186"></a>
+    <div class="header-actions"><div class="pwa-actions"><button id="install-app" class="pwa-button" type="button">Install app</button><button id="update-app" class="pwa-button update-available" type="button" hidden>Update available</button></div><span id="account-email" class="account-email"></span><button id="sign-out" class="text-button" type="button" hidden>Sign out</button></div>
+  </header>
+  <p id="pwa-status" class="pwa-status" role="status" hidden></p>
+  <main>
+    <section id="loading" class="state-card"><h1>Opening company accounts...</h1></section>
+    <section id="access-message" class="state-card" hidden><h1>Company accounts</h1><p id="access-text">Sign in with the Titan Business Pros master admin account.</p><button id="retry-companies" class="primary-button" type="button" hidden>Try again</button> <a class="secondary-button button-link" href="./">Back to admin home</a></section>
+    <section id="companies-view" class="company-accounts-page" hidden>
+      <div class="page-intro"><span class="eyebrow">Master admin workspace</span><h1>Homestead company accounts</h1><p>Choose a company to review its account, admins, homestead page, questionnaire, skills, teams, interviews, and applicants.</p><a class="text-button" href="./">Back to admin home</a></div>
+      <p id="page-message" class="message" role="status"></p>
+      <div class="company-account-layout">
+        <aside class="card company-account-list-card">
+          <h2>Companies <span id="company-count" class="count">0</span></h2>
+          <label for="company-search">Find a company</label><input id="company-search" type="search" placeholder="Search name or owner email">
+          <div id="company-account-list" class="company-account-list"></div>
+          <p id="company-list-empty" class="muted" hidden>No companies match your search.</p>
+        </aside>
+        <div id="company-detail" class="company-account-detail" hidden>
+          <section class="card company-account-heading"><span class="eyebrow">Company account</span><h2 id="selected-company-name"></h2><p id="selected-company-owner" class="muted"></p><p id="selected-company-state" class="field-help"></p><p id="selected-company-count" class="field-help"></p><a id="selected-company-page" class="text-button" href="homestead.html">Open homestead page</a></section>
+          <section class="card"><h2>Admins</h2><div id="company-admins" class="company-account-items"></div><h3>Pending admin invitations</h3><div id="company-pending-admins" class="company-account-items"></div></section>
+          <section class="card"><h2>Homestead page</h2><p id="company-homestead-status" class="field-help"></p><h3 id="company-homestead-name"></h3><p id="company-homestead-description" class="detail-bio"></p><div id="company-homestead-fields" class="homestead-details"></div><div id="company-homestead-photos" class="homestead-gallery"></div></section>
+          <section class="card"><h2>Questionnaire</h2><p id="company-questionnaire-status" class="field-help"></p><div id="company-questions" class="company-account-items"></div></section>
+          <section class="card"><h2>Skills</h2><p id="company-skills-summary" class="field-help"></p><div id="company-skills" class="company-account-items"></div></section>
+          <section class="card"><h2>Teams</h2><div id="company-teams" class="company-account-items"></div><div id="company-team-members" class="company-account-subsection" hidden><h3 id="company-team-name"></h3><div id="company-team-member-list" class="company-account-items"></div><button id="more-team-members" class="secondary-button" type="button" hidden>Load more team members</button></div></section>
+          <section class="card"><h2>Upcoming interviews</h2><div id="company-interviews" class="company-account-items"></div></section>
+          <section class="card"><h2>Applicants with company activity</h2><p class="field-help">All companies can search shared applicant profiles. This list shows applicants who have activity with this company.</p><div id="company-applicants" class="company-account-items"></div><button id="more-company-applicants" class="secondary-button" type="button" hidden>Load more applicants</button><div id="company-applicant-detail" class="company-account-subsection" hidden></div></section>
+        </div>
+      </div>
+    </section>
+  </main>
+  <footer class="site-footer"><div class="footer-inner"><div class="footer-contact"><span class="footer-created-by">This app was created by</span><strong>Titan Business Pros LLC</strong><a href="tel:+14059987979">405-998-7979</a><span class="footer-divider" aria-hidden="true">|</span><a href="mailto:titanbusinesspros@gmail.com">titanbusinesspros@gmail.com</a><a href="https://www.titanbusinesspros.com/" target="_blank" rel="noopener noreferrer">www.titanbusinesspros.com</a><span>Oklahoma City, OK</span></div><nav class="footer-links" aria-label="Footer"><a href="terms.html">Terms of Use</a><a class="facebook-link" href="https://www.facebook.com/TitanBusinessPros/" target="_blank" rel="noopener noreferrer" aria-label="Titan Business Pros on Facebook"><img src="icons/facebook.svg" alt="Facebook" width="28" height="28"></a><a href="privacy.html">Privacy Policy</a></nav><p class="footer-copy">&copy; 2026 Titan Business Pros LLC. All rights reserved.</p></div></footer>
+  <script src="pwa.js" defer></script>
+  <script type="module" src="companies.js"></script>
+  <script>
+    (() => {
+      const retry = document.getElementById('retry-companies');
+      const showLoadError = () => {
+        if (document.getElementById('loading').hidden) return;
+        document.getElementById('loading').hidden = true;
+        document.getElementById('access-text').textContent = 'Could not finish loading company accounts. Check your connection and try again.';
+        retry.hidden = false;
+        document.getElementById('access-message').hidden = false;
+      };
+      retry.addEventListener('click', () => location.reload());
+      document.querySelector('script[type="module"]').addEventListener('error', showLoadError);
+      setTimeout(showLoadError, 40000);
+    })();
+  </script>
+</body>
+</html>

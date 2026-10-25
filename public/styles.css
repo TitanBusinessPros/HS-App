@@ -210,3 +210,29 @@ main{width:100%;flex:1}
 #delete-team{margin-top:24px}
 @media(max-width:1050px){.roster-layout{grid-template-columns:1fr}}
 @media(max-width:700px){.roster-assign-form,.roster-create-form,.roster-rename-form{grid-template-columns:1fr}.roster-member-row{align-items:flex-start;flex-direction:column}}
+.company-accounts-page{max-width:1200px;margin:0 auto}
+.company-account-layout{display:grid;grid-template-columns:minmax(240px,310px) minmax(0,1fr);align-items:start;gap:22px}
+.company-account-list-card{position:sticky;top:20px}
+.company-account-list-card h2{display:flex;align-items:center;justify-content:center;gap:10px}
+.company-account-list-card label{text-align:center}
+.company-account-list{display:grid;gap:8px;max-height:66vh;overflow:auto;margin-top:18px}
+.company-account-detail{display:grid;gap:20px;min-width:0}
+.company-account-detail .card>h2,.company-account-detail .card>h3,.company-account-detail .card>h4{text-align:center}
+.company-account-heading{text-align:center}
+.company-account-heading h2{font-size:clamp(1.6rem,3vw,2.3rem);margin:8px 0}
+.company-account-heading .field-help{margin:7px 0}
+.company-account-heading .text-button{display:inline-block;margin-top:12px}
+.company-account-items{display:grid;gap:8px;margin-top:14px;max-height:460px;overflow:auto}
+.company-account-item{display:grid;gap:4px;width:100%;padding:11px 13px;border:1px solid #dce6d8;border-radius:9px;background:#fbfdf9;color:#203529;text-align:left;overflow-wrap:anywhere}
+.company-account-item strong{font-size:.9rem}
+.company-account-item span{font-size:.8rem;color:#627567;white-space:pre-wrap}
+.company-account-button:hover,.company-account-button.selected{background:#eaf3e8;border-color:#88ab86}
+.company-account-subsection{margin-top:22px;padding-top:20px;border-top:1px solid #dce6d8}
+.company-account-subsection h3,.company-account-subsection h4{text-align:center;font-family:Fraunces,Georgia,serif}
+.company-account-subsection h4{margin:25px 0 10px}
+.company-account-subsection .detail-bio{white-space:pre-wrap;overflow-wrap:anywhere}
+.company-account-detail .homestead-details .company-account-item{align-content:start}
+.company-account-detail .homestead-gallery{grid-template-columns:repeat(auto-fit,minmax(160px,1fr))}
+.company-account-detail .homestead-photo img{height:180px}
+.company-account-detail .card>h3{margin-top:25px}
+@media(max-width:850px){.company-account-layout{grid-template-columns:1fr}.company-account-list-card{position:static}.company-account-list{max-height:270px}}

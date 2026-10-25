@@ -92,7 +92,8 @@ async function assertMasterAdmin(user) {
   const [blocked, admin, account] = await Promise.all([
     db.doc(`blockedUsers/${user.uid}`).get(), db.doc(`admins/${user.uid}`).get(), auth.getUser(user.uid)
   ]);
-  if (blocked.exists || !admin.exists || account.email?.toLowerCase() !== masterAdminEmail) {
+  if (blocked.exists || !admin.exists || companyIdOf(admin) !== primaryCompanyId ||
+      account.email?.toLowerCase() !== masterAdminEmail) {
     throw new HttpsError('permission-denied', 'Master admin access required.');
   }
 }
@@ -235,6 +236,141 @@ export const listCompanies = onCall(options, async request => {
     companies: companies.docs.map(document => ({ id: document.id, name: document.data().name || 'Homestead company',
       ownerEmail: document.data().ownerEmail || '', listed: document.data().listed === true })),
     pending: invitations.docs.map(document => document.data().email).filter(Boolean).sort()
+  };
+});
+
+function masterCompanyId(value) {
+  if (value === primaryCompanyId || (typeof value === 'string' && /^[A-Za-z0-9]{20}$/.test(value))) return value;
+  invalid('Choose a homestead company.');
+}
+
+async function masterCompany(user, value) {
+  await assertMasterAdmin(user);
+  const companyId = masterCompanyId(value);
+  if (companyId === primaryCompanyId) return { companyId, company: {
+    name: 'Titan Business Pros', ownerEmail: masterAdminEmail, active: true, listed: true
+  } };
+  const snapshot = await db.doc(`companies/${companyId}`).get();
+  if (!snapshot.exists) throw new HttpsError('not-found', 'This homestead company no longer exists.');
+  return { companyId, company: snapshot.data() };
+}
+
+function isoDate(value) { return value?.toDate?.()?.toISOString() || null; }
+
+export const getCompanyAccountOverview = onCall({ ...options, timeoutSeconds: 120 }, async request => {
+  const user = caller(request);
+  const { companyId, company } = await masterCompany(user, request.data?.companyId);
+  const [adminDocs, inviteDocs, config, catalog, page, photos, teams, applicantCount, interviews] = await Promise.all([
+    db.collection('admins').get(), db.collection('adminInvites').get(),
+    companyDoc(companyId, 'questionnaireConfig/main').get(),
+    companyCollection(companyId, 'skillCatalog').get(),
+    companyDoc(companyId, 'homesteadPage/main').get(),
+    companyCollection(companyId, 'homesteadPhotos').get(),
+    companyCollection(companyId, 'teams').get(),
+    companyCollection(companyId, 'applicantSummaries').count().get(),
+    companyCollection(companyId, 'applicantSummaries')
+      .where('interviewAt', '>=', Timestamp.now()).orderBy('interviewAt').limit(25).get()
+  ]);
+  const admins = await Promise.all(adminDocs.docs.filter(document => companyIdOf(document) === companyId)
+    .map(async document => {
+      let email = document.data().email || '';
+      if (!email) {
+        try { email = (await auth.getUser(document.id)).email || ''; }
+        catch (error) { if (error.code !== 'auth/user-not-found') throw error; }
+      }
+      const availability = (await db.doc(`adminAvailability/${document.id}`).get()).data()?.availability || null;
+      return { uid: document.id, email, role: companyId === primaryCompanyId && email.toLowerCase() === masterAdminEmail ?
+        'owner' : document.data().role || 'admin', availability };
+    }));
+  const settings = config.data() || {};
+  const homestead = page.data() || {};
+  return {
+    company: { id: companyId, name: company.name || 'Homestead company',
+      ownerEmail: company.ownerEmail || (companyId === primaryCompanyId ? masterAdminEmail : ''), active: company.active !== false,
+      listed: company.listed === true, createdAt: isoDate(company.createdAt) },
+    admins: admins.sort((a, b) => (a.role === 'owner' ? -1 : 0) - (b.role === 'owner' ? -1 : 0) || a.email.localeCompare(b.email)),
+    pendingAdmins: inviteDocs.docs.filter(document => (document.data().companyId || primaryCompanyId) === companyId)
+      .map(document => document.data().email).filter(Boolean).sort(),
+    questionnaire: { enabled: settings.enabled !== false, revision: settings.revision || 0,
+      questions: settings.questions || null },
+    catalog: catalog.docs.map(document => ({ id: document.id, name: document.data().name || '',
+      category: document.data().category || '', deleted: document.data().deleted === true })),
+    homestead: { name: homestead.name || '', description: homestead.description || '',
+      fields: homestead.fields || [], published: homestead.published === true,
+      photos: photos.docs.map(document => ({ id: document.id, photo: document.data().photo || '' })) },
+    teams: teams.docs.map(document => ({ id: document.id, name: document.data().name || 'Unnamed team' }))
+      .sort((a, b) => a.name.localeCompare(b.name)),
+    applicantCount: applicantCount.data().count,
+    upcomingInterviews: interviews.docs.map(document => ({ uid: document.id,
+      name: document.data().name || 'Applicant', mode: document.data().interviewMode || 'Interview',
+      scheduledAt: isoDate(document.data().interviewAt) }))
+  };
+});
+
+export const listCompanyAccountApplicants = onCall(options, async request => {
+  const user = caller(request);
+  const { companyId } = await masterCompany(user, request.data?.companyId);
+  const cursor = request.data?.cursor || '';
+  if (typeof cursor !== 'string' || cursor.includes('/') || cursor.length > 128) invalid('Refresh the applicant list.');
+  let query = companyCollection(companyId, 'applicantSummaries').orderBy(FieldPath.documentId()).limit(26);
+  if (cursor) query = query.startAfter(cursor);
+  const snapshot = await query.get();
+  return { applicants: snapshot.docs.slice(0, 25).map(document => ({ uid: document.id,
+    name: document.data().name || 'Applicant', email: document.data().email || '',
+    status: document.data().status || 'submitted', skillCount: document.data().skillCount || 0,
+    questionnaireCompleted: Boolean(document.data().questionnaireCompletedAt),
+    interviewAt: isoDate(document.data().interviewAt) })),
+    nextCursor: snapshot.size > 25 ? snapshot.docs[24].id : null };
+});
+
+export const listCompanyAccountTeamMembers = onCall(options, async request => {
+  const user = caller(request);
+  const { companyId } = await masterCompany(user, request.data?.companyId);
+  const teamId = request.data?.teamId;
+  const cursor = request.data?.cursor || '';
+  if (typeof teamId !== 'string' || !/^[A-Za-z0-9]{20}$/.test(teamId) ||
+      typeof cursor !== 'string' || cursor.includes('/') || cursor.length > 128) invalid('Choose a team.');
+  const team = companyDoc(companyId, `teams/${teamId}`);
+  if (!(await team.get()).exists) throw new HttpsError('not-found', 'This team no longer exists.');
+  let query = team.collection('members').orderBy(FieldPath.documentId()).limit(26);
+  if (cursor) query = query.startAfter(cursor);
+  const members = await query.get();
+  const shown = members.docs.slice(0, 25);
+  const profiles = shown.length ? await db.getAll(...shown.map(document => db.doc(`applicantDirectory/${document.id}`))) : [];
+  return { members: shown.map((document, index) => ({ uid: document.id,
+    name: profiles[index]?.data()?.name || 'Applicant', email: profiles[index]?.data()?.email || '' })),
+    nextCursor: members.size > 25 ? members.docs[24].id : null };
+});
+
+export const getCompanyAccountApplicant = onCall(options, async request => {
+  const user = caller(request);
+  const { companyId } = await masterCompany(user, request.data?.companyId);
+  const uid = request.data?.uid;
+  if (typeof uid !== 'string' || !uid || uid.includes('/') || uid.length > 128) invalid('Choose an applicant.');
+  const conversation = companyDoc(companyId, `conversations/${uid}`);
+  const [shared, application, questionnaire, skills, messages] = await Promise.all([
+    db.doc(`users/${uid}`).get(), applicationRef(companyId, uid).get(),
+    companyDoc(companyId, `questionnaires/${uid}`).get(), companyDoc(companyId, `skills/${uid}`).get(),
+    conversation.collection('messages').orderBy('createdAt', 'desc').limit(100).get()
+  ]);
+  if (!shared.exists && !application.exists) throw new HttpsError('not-found', 'Applicant record unavailable.');
+  const profile = shared.data() || {};
+  const app = application.data() || {};
+  const interview = app.interview || null;
+  return {
+    uid, profile: profile.profile || {}, email: profile.email || '', bio: profile.bio || '',
+    photos: profile.photos || (profile.photoDataUrl ? [profile.photoDataUrl] : []),
+    website: profile.website || '', socialLinks: profile.socialLinks || [],
+    status: app.status || 'submitted',
+    interview: interview ? { mode: interview.mode || '', source: interview.source || '',
+      scheduledAt: isoDate(interview.scheduledAt), timeZoneLabel: interview.timeZoneLabel || '',
+      note: interview.note || '', meetingLink: interview.meetingLink || '',
+      contactAdminUid: interview.contactAdminUid || '' } : null,
+    questionnaire: questionnaire.data() ? { questions: questionnaire.data().questions || null,
+      answers: questionnaire.data().answers || [], submittedAt: isoDate(questionnaire.data().submittedAt) } : null,
+    skills: skills.data()?.entries || [],
+    messages: messages.docs.map(document => ({ senderRole: document.data().senderRole || '',
+      text: document.data().text || '', createdAt: isoDate(document.data().createdAt) })).reverse()
   };
 });
 

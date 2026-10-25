@@ -316,7 +316,10 @@ function start() {
       for (const company of data.companies || []) {
         const row = document.createElement('div');
         row.className = 'admin-row';
-        row.textContent = `${company.name} · ${company.ownerEmail} · ${company.listed ? 'Available to applicants' : 'Awaiting company name'}`;
+        const link = document.createElement('a');
+        link.href = `companies.html?company=${encodeURIComponent(company.id)}`;
+        link.textContent = `${company.name} · ${company.ownerEmail} · ${company.listed ? 'Available to applicants' : 'Awaiting company name'}`;
+        row.append(link);
         $('company-list').append(row);
       }
       $('company-pending-list').replaceChildren();
@@ -399,6 +402,7 @@ function start() {
         $('admin-home-management').hidden = !isCompanyOwner;
         $('company-profile-management').hidden = companyId === 'titan' || !isCompanyOwner;
         $('company-invites-management').hidden = !isMasterAdmin;
+        $('open-company-accounts').hidden = !isMasterAdmin;
         $('admin-homestead-link').textContent = isCompanyOwner ?
           'Edit homestead page' : 'View homestead page';
         $('admin-homestead-link').href = companyLink('homestead.html', companyId);

@@ -5,8 +5,7 @@ import { initializeAppCheck, ReCaptchaEnterpriseProvider } from 'https://www.gst
 import { getFunctions, httpsCallable } from 'https://www.gstatic.com/firebasejs/13.1.0/firebase-functions.js';
 import { firebaseConfig, appCheckSiteKey } from './firebase-config.js';
 import { questions } from './questions.js';
-import { requestedCompany, companySegments, companyLink, questionnaireAvailable } from './company-context.js';
-import { readQuestionnaireAnswers, renderQuestionnaireQuestions } from './questionnaire-form.js';
+import { requestedCompany, companySegments, companyLink } from './company-context.js';
 
 const $ = id => document.getElementById(id);
 const app = initializeApp(firebaseConfig);
@@ -19,7 +18,6 @@ document.querySelectorAll('a[href="./"]').forEach(link => { link.href = companyL
 const saveQuestionnaire = httpsCallable(getFunctions(app, 'us-west2'), 'saveQuestionnaire');
 let currentQuestions = questions;
 let currentRevision = 0;
-let currentConfig = null;
 let savedData = null;
 let configUnsub = null;
 let authGeneration = 0;
@@ -31,7 +29,16 @@ function showAccess(message) {
   $('access-message').hidden = false;
 }
 
-function readAnswers() { return readQuestionnaireAnswers($('questionnaire-form'), currentQuestions); }
+function readAnswers() {
+  return currentQuestions.map((question, index) => {
+    const written = $(`written-answer-${index}`)?.value.trim() || '';
+    if (!question.choices.length) return written ? { text: written } : null;
+    const selected = document.querySelector(`input[name="answer-${index}"]:checked`);
+    if (!selected) return null;
+    if (selected.value === 'written') return written ? { text: written } : null;
+    return Number(selected.value);
+  });
+}
 
 function updateProgress() {
   const count = readAnswers().filter(answer => answer !== null).length;
@@ -39,7 +46,71 @@ function updateProgress() {
 }
 
 function renderQuestions(savedAnswers = []) {
-  renderQuestionnaireQuestions($('questions-list'), currentQuestions, savedAnswers, updateProgress);
+  const list = $('questions-list');
+  list.replaceChildren();
+  let currentSection = '';
+  currentQuestions.forEach((question, index) => {
+    if (question.section !== currentSection) {
+      currentSection = question.section;
+      const heading = document.createElement('h2');
+      heading.className = 'question-section';
+      heading.textContent = currentSection;
+      list.append(heading);
+    }
+    const fieldset = document.createElement('fieldset');
+    fieldset.className = 'question';
+    const legend = document.createElement('legend');
+    legend.textContent = `${index + 1}. ${question.prompt}`;
+    fieldset.append(legend);
+    const written = document.createElement('div');
+    written.className = 'written-answer';
+    written.hidden = question.choices.length > 0 && typeof savedAnswers[index]?.text !== 'string';
+    const writtenLabel = document.createElement('label');
+    writtenLabel.htmlFor = `written-answer-${index}`;
+    writtenLabel.textContent = 'Your written answer (up to 500 characters)';
+    const writtenInput = document.createElement('textarea');
+    writtenInput.id = `written-answer-${index}`;
+    writtenInput.rows = 3;
+    writtenInput.maxLength = 500;
+    writtenInput.value = typeof savedAnswers[index]?.text === 'string' ? savedAnswers[index].text : '';
+    writtenInput.addEventListener('input', updateProgress);
+    written.append(writtenLabel, writtenInput);
+    question.choices.forEach((choice, choiceIndex) => {
+      const label = document.createElement('label');
+      label.className = 'choice';
+      const input = document.createElement('input');
+      input.type = 'radio';
+      input.name = `answer-${index}`;
+      input.value = String(choiceIndex);
+      input.checked = savedAnswers[index] === choiceIndex;
+      input.addEventListener('change', () => { written.hidden = true; updateProgress(); });
+      const span = document.createElement('span');
+      span.textContent = choice;
+      label.append(input, span);
+      fieldset.append(label);
+    });
+    if (question.choices.length) {
+      const label = document.createElement('label');
+      label.className = 'choice';
+      const input = document.createElement('input');
+      input.type = 'radio';
+      input.name = `answer-${index}`;
+      input.value = 'written';
+      input.checked = typeof savedAnswers[index]?.text === 'string';
+      input.addEventListener('change', () => {
+        written.hidden = false;
+        writtenInput.focus();
+        updateProgress();
+      });
+      const span = document.createElement('span');
+      span.textContent = 'Write my own answer';
+      label.append(input, span);
+      fieldset.append(label);
+    }
+    fieldset.append(written);
+    list.append(fieldset);
+  });
+  updateProgress();
 }
 
 onAuthStateChanged(auth, async user => {
@@ -49,7 +120,6 @@ onAuthStateChanged(auth, async user => {
   savedData = null;
   currentQuestions = questions;
   currentRevision = 0;
-  currentConfig = null;
   $('questions-list').replaceChildren();
   $('account-email').textContent = user?.email || '';
   $('sign-out').hidden = !user;
@@ -66,8 +136,7 @@ onAuthStateChanged(auth, async user => {
     configUnsub = onSnapshot(scopedDoc('questionnaireConfig', 'main'), snapshot => {
       if (generation !== authGeneration) return;
       const config = snapshot.data();
-      if (!questionnaireAvailable(companyId, config)) return showAccess('This homestead does not have a questionnaire available.');
-      currentConfig = config || null;
+      if (config?.enabled === false) return showAccess('The homesteading questionnaire is currently turned off.');
       const previousRevision = currentRevision;
       const pendingAnswers = readAnswers();
       currentQuestions = config?.questions || questions;
@@ -110,7 +179,7 @@ $('questionnaire-form').addEventListener('submit', async event => {
   message.className = 'message';
   try {
     await saveQuestionnaire({ answers, revision: submittedRevision, companyId });
-    savedData = { version: currentConfig ? 2 : 1, revision: submittedRevision, answers };
+    savedData = { version: submittedRevision ? 2 : 1, revision: submittedRevision, answers };
     message.className = 'message success';
     message.textContent = submittedRevision === currentRevision ?
       'Your answers have been saved for admin review.' :

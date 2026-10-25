@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { companySegments, companyLink, requestedCompany, questionnaireAvailable } from '../public/company-context.js';
+import { companySegments, companyLink, requestedCompany } from '../public/company-context.js';
 
 test('Titan keeps existing paths while another company uses its own subtree', () => {
   const companyId = 'aaaaaaaaaaaaaaaaaaaa';
@@ -17,13 +17,4 @@ test('an invalid company URL falls back to Titan', () => {
   globalThis.location = { search: '?company=aaaaaaaaaaaaaaaaaaaa' };
   assert.equal(requestedCompany(), 'aaaaaaaaaaaaaaaaaaaa');
   delete globalThis.location;
-});
-
-test('a company questionnaire appears only after its owner publishes it', () => {
-  const companyId = 'aaaaaaaaaaaaaaaaaaaa';
-  assert.equal(questionnaireAvailable('titan', null), true);
-  assert.equal(questionnaireAvailable('titan', { enabled: false }), false);
-  assert.equal(questionnaireAvailable(companyId, null), false);
-  assert.equal(questionnaireAvailable(companyId, { enabled: false, questions: [{}] }), false);
-  assert.equal(questionnaireAvailable(companyId, { enabled: true, questions: [{}] }), true);
 });

@@ -16,9 +16,3 @@ export function companySegments(companyId, ...parts) {
 export function companyLink(page, companyId) {
   return companyId === titanCompanyId ? page : `${page}?company=${encodeURIComponent(companyId)}`;
 }
-
-export function questionnaireAvailable(companyId, config) {
-  if (config?.enabled === false) return false;
-  if (companyId === titanCompanyId && !config) return true;
-  return config?.enabled === true && Array.isArray(config.questions) && config.questions.length > 0;
-}

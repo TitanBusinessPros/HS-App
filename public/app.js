@@ -1,13 +1,13 @@
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/13.1.0/firebase-app.js';
 import { getAuth, onAuthStateChanged, GoogleAuthProvider, signInWithPopup, signOut } from 'https://www.gstatic.com/firebasejs/13.1.0/firebase-auth.js';
-import { getFirestore, doc, collection, getDoc, getDocs, onSnapshot, query, orderBy, limit } from 'https://www.gstatic.com/firebasejs/13.1.0/firebase-firestore.js';
+import { getFirestore, doc, collection, getDoc, onSnapshot, query, orderBy } from 'https://www.gstatic.com/firebasejs/13.1.0/firebase-firestore.js';
 import { initializeAppCheck, ReCaptchaEnterpriseProvider } from 'https://www.gstatic.com/firebasejs/13.1.0/firebase-app-check.js';
 import { getFunctions, httpsCallable } from 'https://www.gstatic.com/firebasejs/13.1.0/firebase-functions.js';
 import { firebaseConfig, appCheckSiteKey } from './firebase-config.js';
 import { normalizeExternalUrl } from './links.js';
 import { questions } from './questions.js';
 import { buildSkillCatalog } from './skills.js';
-import { requestedCompany, companySegments, companyLink, questionnaireAvailable } from './company-context.js';
+import { requestedCompany, companySegments, companyLink } from './company-context.js';
 
 const $ = id => document.getElementById(id);
 const configured = firebaseConfig.apiKey && firebaseConfig.apiKey !== 'REPLACE_ME' && firebaseConfig.projectId !== 'REPLACE_ME' && firebaseConfig.appId !== 'REPLACE_ME' && appCheckSiteKey && appCheckSiteKey !== 'REPLACE_ME';
@@ -64,9 +64,6 @@ function start() {
   let memberSkillCatalog = buildSkillCatalog();
   let rosterTeamsUnsub = null;
   let rosterSummariesUnsub = null;
-  let questionnaireAlertsUnsub = null;
-  let questionnaireAlertTimes = new Map();
-  let questionnaireAlertsReady = false;
   let rosterMemberUnsubs = new Map();
   let rosterTeams = [];
   let rosterMembers = new Map();
@@ -76,7 +73,6 @@ function start() {
   let rosterTeamsReady = false;
   let rosterError = '';
   let authGeneration = 0;
-  let homesteadLoadId = 0;
   let shownBookingInvite = '';
   const rosterCollator = new Intl.Collator(undefined, { sensitivity: 'base' });
   const photoPreview = document.createElement('img');
@@ -125,71 +121,10 @@ function start() {
     $('initial-loading').hidden = true;
     document.body.classList.remove('app-loading');
   }
-  async function loadHomesteads(loadId) {
-    const list = $('homestead-discovery-list');
-    list.replaceChildren();
-    status('homestead-discovery-status', 'Loading homesteads...');
-    try {
-      const listings = await getDocs(collection(db, 'companyListings'));
-      const companies = [{ id: 'titan', companyName: 'Titan Business Pros' },
-        ...listings.docs.filter(item => item.data().active !== false)
-          .map(item => ({ id: item.id, companyName: item.data().name || 'Homestead company' }))];
-      const pages = await Promise.all(companies.map(async company => {
-        const snapshot = await getDoc(doc(db, ...companySegments(company.id, 'homesteadPage', 'main')));
-        const page = snapshot.data();
-        return page?.published === true ? {
-          id: company.id, name: page.name || company.companyName,
-          companyName: company.companyName, description: (page.description || '').slice(0, 180)
-        } : null;
-      }));
-      if (loadId !== homesteadLoadId || !currentUser) return;
-      const available = pages.filter(Boolean).sort((a, b) => rosterCollator.compare(a.name, b.name));
-      for (const company of available) {
-        const card = document.createElement('article');
-        card.className = 'homestead-discovery-card';
-        const heading = document.createElement('h3');
-        const link = document.createElement('a');
-        link.href = companyLink('homestead.html', company.id);
-        link.textContent = company.name;
-        heading.append(link);
-        card.append(heading);
-        if (company.companyName && company.companyName !== company.name) {
-          const owner = document.createElement('p');
-          owner.className = 'field-help';
-          owner.textContent = company.companyName;
-          card.append(owner);
-        }
-        if (company.description) {
-          const description = document.createElement('p');
-          description.className = 'muted';
-          description.textContent = company.description;
-          card.append(description);
-        }
-        list.append(card);
-      }
-      status('homestead-discovery-status', available.length ?
-        `${available.length} ${available.length === 1 ? 'homestead' : 'homesteads'} to explore.` :
-        'No homestead pages have been published yet.');
-    } catch (error) {
-      if (loadId === homesteadLoadId) status('homestead-discovery-status',
-        `Could not load homesteads: ${readableError(error)}. Close and reopen to try again.`, true);
-    }
-  }
-  $('find-homesteads').addEventListener('click', () => {
-    const panel = $('homestead-discovery');
-    panel.hidden = !panel.hidden;
-    $('find-homesteads').setAttribute('aria-expanded', String(!panel.hidden));
-    const loadId = ++homesteadLoadId;
-    if (!panel.hidden) loadHomesteads(loadId);
-  });
   function cleanSubscriptions() {
-    for (const unsub of [memberConversationUnsub, profileUnsub, applicationUnsub, questionnaireUnsub, questionnaireConfigUnsub, skillsUnsub, skillCatalogUnsub, rosterTeamsUnsub, rosterSummariesUnsub, questionnaireAlertsUnsub]) if (unsub) unsub();
+    for (const unsub of [memberConversationUnsub, profileUnsub, applicationUnsub, questionnaireUnsub, questionnaireConfigUnsub, skillsUnsub, skillCatalogUnsub, rosterTeamsUnsub, rosterSummariesUnsub]) if (unsub) unsub();
     for (const unsub of rosterMemberUnsubs.values()) unsub();
-    memberConversationUnsub = profileUnsub = applicationUnsub = questionnaireUnsub = questionnaireConfigUnsub = skillsUnsub = skillCatalogUnsub = rosterTeamsUnsub = rosterSummariesUnsub = questionnaireAlertsUnsub = null;
-    questionnaireAlertTimes = new Map();
-    questionnaireAlertsReady = false;
-    $('questionnaire-alerts-list').replaceChildren();
-    status('questionnaire-alerts-status', 'Loading submissions...');
+    memberConversationUnsub = profileUnsub = applicationUnsub = questionnaireUnsub = questionnaireConfigUnsub = skillsUnsub = skillCatalogUnsub = rosterTeamsUnsub = rosterSummariesUnsub = null;
     memberSkillEntries = [];
     memberSkillCatalog = buildSkillCatalog();
     rosterMemberUnsubs = new Map();
@@ -202,39 +137,6 @@ function start() {
     rosterError = '';
     $('admin-team-grid').replaceChildren();
     status('admin-roster-status', 'Loading teams...');
-  }
-  function watchQuestionnaireAlerts(generation) {
-    questionnaireAlertsUnsub = onSnapshot(query(scopedCollection('applicantSummaries'),
-      orderBy('questionnaireCompletedAt', 'desc'), limit(10)), snapshot => {
-      if (generation !== authGeneration) return;
-      const submissions = snapshot.docs.map(item => ({ uid: item.id, ...item.data() }))
-        .filter(item => item.questionnaireCompletedAt?.toMillis)
-        .sort((a, b) => b.questionnaireCompletedAt.toMillis() - a.questionnaireCompletedAt.toMillis());
-      const fresh = questionnaireAlertsReady ? submissions.find(item =>
-        item.questionnaireCompletedAt.toMillis() > (questionnaireAlertTimes.get(item.uid) || 0)) : null;
-      questionnaireAlertTimes = new Map(submissions.map(item => [item.uid, item.questionnaireCompletedAt.toMillis()]));
-      questionnaireAlertsReady = true;
-      status('questionnaire-alerts-status', fresh ?
-        `New questionnaire from ${fresh.name || 'an applicant'}.` :
-        submissions.length ? `Showing the latest ${submissions.length} questionnaire ${submissions.length === 1 ? 'submission' : 'submissions'}.` :
-        'No questionnaires submitted yet.');
-      const list = $('questionnaire-alerts-list');
-      list.replaceChildren();
-      for (const person of submissions.slice(0, 10)) {
-        const link = document.createElement('a');
-        link.className = 'questionnaire-alert-item';
-        const url = new URL(companyLink('profiles.html', companyId), location.href);
-        url.searchParams.set('applicant', person.uid);
-        link.href = url.toString();
-        const name = document.createElement('strong');
-        name.textContent = person.name || 'Unnamed applicant';
-        const submitted = document.createElement('span');
-        submitted.textContent = `Submitted ${person.questionnaireCompletedAt.toDate().toLocaleString()}`;
-        link.append(name, submitted);
-        list.append(link);
-      }
-    }, error => status('questionnaire-alerts-status',
-      `Could not load questionnaire submissions: ${readableError(error)}`, true));
   }
   function renderAdminRoster() {
     const grid = $('admin-team-grid');
@@ -457,10 +359,6 @@ function start() {
 
   onAuthStateChanged(auth, async user => {
     const generation = ++authGeneration;
-    ++homesteadLoadId;
-    $('homestead-discovery').hidden = true;
-    $('find-homesteads').setAttribute('aria-expanded', 'false');
-    $('homestead-discovery-list').replaceChildren();
     cleanSubscriptions();
     currentUser = user;
     currentProfile = null;
@@ -514,12 +412,11 @@ function start() {
         if (isMasterAdmin) loadCompanies();
         showView('admin-view');
         watchAdminRoster(generation);
-        watchQuestionnaireAlerts(generation);
       } else {
         companyId = requestedCompany();
         await sanitizeMyContactsCall();
         if (generation !== authGeneration) return;
-        for (const link of document.querySelectorAll('#member-view a[href="questionnaire.html"], #member-view a[href="skills.html"]')) {
+        for (const link of document.querySelectorAll('#member-view a[href="questionnaire.html"], #member-view a[href="skills.html"], #member-view a[href="homestead.html"]')) {
           link.href = companyLink(link.getAttribute('href'), companyId);
         }
         showView('member-view');
@@ -530,7 +427,7 @@ function start() {
         }, error => status('profile-message', readableError(error), true));
         questionnaireConfigUnsub = onSnapshot(scopedDoc('questionnaireConfig', 'main'), snapshot => {
           questionnaireSettings = snapshot.data() || null;
-          $('questionnaire-section').hidden = !questionnaireAvailable(companyId, questionnaireSettings);
+          $('questionnaire-section').hidden = questionnaireSettings?.enabled === false;
           updateQuestionnaireStatus();
         }, error => status('profile-message', readableError(error), true));
         skillsUnsub = onSnapshot(scopedDoc('skills', user.uid), snapshot => {

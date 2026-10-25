@@ -77,6 +77,10 @@
 .homestead-photo{margin:0;display:grid;gap:8px;align-content:start}
 .homestead-photo img{width:100%;height:230px;object-fit:contain;border:1px solid #dce5d9;border-radius:10px;background:#f2f4ed}
 .homestead-photo button{justify-self:start}
+.homestead-questionnaire>summary{cursor:pointer;font-family:Fraunces,Georgia,serif;font-size:1.55rem;font-weight:600;text-align:center;color:#234837}
+.homestead-questionnaire form{max-width:850px;margin:24px auto 0}
+.homestead-questionnaire form>.field-count{text-align:left}
+.homestead-questionnaire>.muted{text-align:center;margin:16px 0}
 .topic-edit-row{display:grid;grid-template-columns:minmax(150px,1fr) minmax(220px,2fr) auto;gap:10px;align-items:start;padding:13px 0;border-bottom:1px solid #e5ebe2}
 .topic-edit-row button{margin-top:10px}
 .homestead-photo-editor{border-top:1px solid #e5ebe2;margin-top:30px;padding-top:24px}
@@ -145,6 +149,18 @@ main{width:100%;flex:1}
 .card > .eyebrow{display:block}
 .section-heading,.inbox-heading{justify-content:center;text-align:center}
 .questionnaire-link{text-align:center}
+.homestead-discovery{margin-top:20px;text-align:left}
+.homestead-discovery-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,240px),1fr));gap:12px;margin-top:14px}
+.homestead-discovery-card{padding:17px;border:1px solid #dce5d9;border-radius:10px;background:#f8fbf6;overflow-wrap:anywhere}
+.homestead-discovery-card h3{margin:0 0 8px;font-family:Fraunces,Georgia,serif;font-size:1.2rem}
+.homestead-discovery-card h3 a{color:#234837;text-underline-offset:3px}
+.homestead-discovery-card p{margin:0 0 8px}
+.questionnaire-alerts{background:#f4f8f1;border:1px solid #d6e4d2;border-radius:14px;padding:22px;margin-top:26px}
+.questionnaire-alert-list{display:grid;gap:8px;margin-top:14px}
+.questionnaire-alert-item{display:flex;justify-content:space-between;gap:12px;align-items:center;padding:12px 14px;border:1px solid #dce6d8;border-radius:9px;background:#fffefa;color:#234837;text-decoration:none}
+.questionnaire-alert-item:hover{background:#edf4eb}
+.questionnaire-alert-item span{font-size:.8rem;color:#68776a}
+@media(max-width:620px){.questionnaire-alert-item{align-items:flex-start;flex-direction:column}}
 .policy-page article > .eyebrow,.policy-page article > h1,.policy-page article > p.muted{text-align:center}
 .site-footer{width:100%;margin-top:auto;padding:40px 24px 24px;background:#203b2b;border-top:4px solid #72916f;color:#f5f5ed}
 .footer-inner{max-width:960px;margin:0 auto;display:grid;justify-items:center;gap:22px;text-align:center}

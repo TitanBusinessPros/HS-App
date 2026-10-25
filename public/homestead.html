@@ -30,6 +30,17 @@
         <section id="homestead-about-section" class="card homestead-section"><h2>About this homestead</h2><p id="homestead-description" class="homestead-description"></p></section>
         <section id="homestead-details-section" class="card homestead-section"><h2>Homestead details</h2><div id="homestead-details" class="homestead-details"></div></section>
         <section class="card homestead-section"><div class="section-heading"><h2>Photos of the homestead</h2><span id="homestead-photo-count" class="count">0</span></div><div id="homestead-gallery" class="homestead-gallery"></div><p id="homestead-no-photos" class="muted">Photos will appear here when the team adds them.</p></section>
+        <details id="homestead-questionnaire" class="card homestead-section homestead-questionnaire" hidden>
+          <summary>View and complete this homestead's questionnaire</summary>
+          <p class="muted">Your answers go only to this homestead's admins. You can return to update them.</p>
+          <p id="homestead-questionnaire-profile-note" class="field-help" hidden>Save your applicant introduction before submitting. <a id="homestead-questionnaire-profile-link" href="./">Go to your profile</a></p>
+          <form id="homestead-questionnaire-form">
+            <p id="homestead-questionnaire-progress" class="field-count"></p>
+            <div id="homestead-questions-list"></div>
+            <button id="homestead-save-questionnaire" class="primary-button" type="submit">Save answers</button>
+            <p id="homestead-questionnaire-message" class="message" role="status"></p>
+          </form>
+        </details>
       </div>
       <section id="admin-editor" class="card homestead-section" hidden>
         <span class="eyebrow">Company owner editor</span><h2>Edit the homestead page</h2>

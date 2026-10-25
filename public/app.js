@@ -46,9 +46,6 @@ function start() {
     event.preventDefault();
     location.href = `${companyLink('profiles.html', companyId)}${companyId === 'titan' ? '?' : '&'}open=${Date.now()}`;
   });
-  $('company-select').addEventListener('change', () => {
-    location.href = companyLink('./', $('company-select').value);
-  });
   let currentUser = null;
   let currentProfile = null;
   let isAdmin = false;
@@ -57,7 +54,6 @@ function start() {
   let memberConversationUnsub = null;
   let profileUnsub = null;
   let applicationUnsub = null;
-  let companyListingsUnsub = null;
   let questionnaireUnsub = null;
   let questionnaireConfigUnsub = null;
   let questionnaireSaved = null;
@@ -126,9 +122,9 @@ function start() {
     document.body.classList.remove('app-loading');
   }
   function cleanSubscriptions() {
-    for (const unsub of [memberConversationUnsub, profileUnsub, applicationUnsub, companyListingsUnsub, questionnaireUnsub, questionnaireConfigUnsub, skillsUnsub, skillCatalogUnsub, rosterTeamsUnsub, rosterSummariesUnsub]) if (unsub) unsub();
+    for (const unsub of [memberConversationUnsub, profileUnsub, applicationUnsub, questionnaireUnsub, questionnaireConfigUnsub, skillsUnsub, skillCatalogUnsub, rosterTeamsUnsub, rosterSummariesUnsub]) if (unsub) unsub();
     for (const unsub of rosterMemberUnsubs.values()) unsub();
-    memberConversationUnsub = profileUnsub = applicationUnsub = companyListingsUnsub = questionnaireUnsub = questionnaireConfigUnsub = skillsUnsub = skillCatalogUnsub = rosterTeamsUnsub = rosterSummariesUnsub = null;
+    memberConversationUnsub = profileUnsub = applicationUnsub = questionnaireUnsub = questionnaireConfigUnsub = skillsUnsub = skillCatalogUnsub = rosterTeamsUnsub = rosterSummariesUnsub = null;
     memberSkillEntries = [];
     memberSkillCatalog = buildSkillCatalog();
     rosterMemberUnsubs = new Map();
@@ -420,15 +416,6 @@ function start() {
         companyId = requestedCompany();
         await sanitizeMyContactsCall();
         if (generation !== authGeneration) return;
-        $('company-select').value = companyId;
-        companyListingsUnsub = onSnapshot(collection(db, 'companyListings'), snapshot => {
-          const select = $('company-select');
-          select.replaceChildren(new Option('Titan Business Pros', 'titan'));
-          for (const item of snapshot.docs) {
-            if (item.data().active !== false) select.add(new Option(item.data().name || 'Homestead company', item.id));
-          }
-          if ([...select.options].some(option => option.value === companyId)) select.value = companyId;
-        }, error => status('profile-message', readableError(error), true));
         for (const link of document.querySelectorAll('#member-view a[href="questionnaire.html"], #member-view a[href="skills.html"], #member-view a[href="homestead.html"]')) {
           link.href = companyLink(link.getAttribute('href'), companyId);
         }

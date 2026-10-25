@@ -33,6 +33,8 @@ function start() {
   const sanitizeMyContactsCall = httpsCallable(functions, 'sanitizeMyContacts');
   const listInterviewSlotsCall = httpsCallable(functions, 'listInterviewSlots');
   const bookInterviewSlotCall = httpsCallable(functions, 'bookInterviewSlot');
+  const claimAdminEmailCall = httpsCallable(functions, 'claimAdminEmail');
+  const addAdminEmailCall = httpsCallable(functions, 'addAdminEmail');
   let currentUser = null;
   let currentProfile = null;
   let isAdmin = false;
@@ -251,6 +253,21 @@ function start() {
     }
   });
   $('sign-out').addEventListener('click', () => signOut(auth));
+  $('home-add-admin-form').addEventListener('submit', async event => {
+    event.preventDefault();
+    const button = event.submitter || event.target.querySelector('button[type="submit"]');
+    button.disabled = true;
+    try {
+      const result = await addAdminEmailCall({ email: $('home-admin-email').value.trim() });
+      if (result.data.state === 'added') {
+        $('home-admin-email').value = '';
+        status('home-admin-message', 'Admin email saved. They will get access when they sign in with that Google account.');
+      } else {
+        status('home-admin-message', result.data.state === 'active' ? 'This account is already an admin.' : 'This email is already waiting for sign-in.');
+      }
+    } catch (error) { status('home-admin-message', readableError(error), true); }
+    finally { button.disabled = false; }
+  });
 
   onAuthStateChanged(auth, async user => {
     const generation = ++authGeneration;
@@ -279,9 +296,12 @@ function start() {
         return;
       }
       isAdmin = (await getDoc(doc(db, 'admins', user.uid))).exists();
+      if (!isAdmin) isAdmin = (await claimAdminEmailCall()).data.admin === true;
       if (generation !== authGeneration) return;
       if (isAdmin) {
-        $('admin-homestead-link').textContent = user.email?.toLowerCase() === 'titanbusinesspros@gmail.com' ?
+        const isMasterAdmin = user.email?.toLowerCase() === 'titanbusinesspros@gmail.com';
+        $('admin-home-management').hidden = !isMasterAdmin;
+        $('admin-homestead-link').textContent = isMasterAdmin ?
           'Edit homestead page' : 'View homestead page';
         showView('admin-view');
         watchAdminRoster(generation);

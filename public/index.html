@@ -128,6 +128,16 @@
       <p>Review applicant profiles, skill rankings, questionnaire answers, and private conversations. Team rosters are listed below.</p>
       <a id="open-private-profiles" class="primary-button button-link" href="profiles.html">Open private profiles</a>
       <a id="admin-homestead-link" class="secondary-button button-link" href="homestead.html">View homestead page</a>
+      <section id="admin-home-management" class="admin-home-management" hidden>
+        <h2>Add an admin</h2>
+        <p class="muted">Enter the Google email they will use to sign in. Their admin access starts automatically on their next sign-in.</p>
+        <form id="home-add-admin-form">
+          <label for="home-admin-email">New admin's Google email</label>
+          <div class="admin-email-controls"><input id="home-admin-email" type="email" autocomplete="email" required maxlength="254" placeholder="name@example.com"><button class="primary-button" type="submit">Add admin</button></div>
+        </form>
+        <p id="home-admin-message" class="message" role="status"></p>
+        <a class="text-button" href="profiles.html#admin-management">Manage active and pending admins</a>
+      </section>
       <section class="admin-roster" aria-labelledby="admin-roster-title">
         <h2 id="admin-roster-title">Homestead teams</h2>
         <p class="muted">See every team and its applicants here. Open a member's private profile to review or change their team assignments.</p>

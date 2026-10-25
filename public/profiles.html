@@ -77,8 +77,17 @@
       </section>
       <section id="admin-management" class="card skill-ranking-card" hidden>
         <h2>Manage admins</h2>
-        <p class="muted">Only the master admin can remove another admin's access. Removed admins can no longer review applicants or send interview invitations.</p>
+        <p class="muted">Add someone using the Google email they will use to sign in. Their admin access starts automatically on their next sign-in. Only the master admin can add or remove admins.</p>
+        <form id="add-admin-form">
+          <label for="new-admin-email">New admin's Google email</label>
+          <div class="admin-email-controls"><input id="new-admin-email" type="email" autocomplete="email" required maxlength="254" placeholder="name@example.com"><button class="primary-button" type="submit">Add admin</button></div>
+        </form>
+        <button id="refresh-admin-list" class="text-button" type="button">Refresh admin list</button>
+        <h3>Active admins</h3>
         <div id="admin-list" class="admin-list"></div>
+        <h3>Pending sign-in</h3>
+        <p id="pending-admin-empty" class="field-help">No pending admins.</p>
+        <div id="pending-admin-list" class="admin-list"></div>
         <p id="admin-management-message" class="message" role="status"></p>
       </section>
       <details id="questionnaire-editor" class="card questionnaire-editor-card" hidden>

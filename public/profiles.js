@@ -22,6 +22,9 @@ const addSkill = httpsCallable(functions, 'addSkill');
 const deleteSkill = httpsCallable(functions, 'deleteSkill');
 const saveQuestionnaireConfig = httpsCallable(functions, 'saveQuestionnaireConfig');
 const listAdmins = httpsCallable(functions, 'listAdmins');
+const addAdminEmail = httpsCallable(functions, 'addAdminEmail');
+const cancelAdminEmail = httpsCallable(functions, 'cancelAdminEmail');
+const claimAdminEmail = httpsCallable(functions, 'claimAdminEmail');
 const removeAdmin = httpsCallable(functions, 'removeAdmin');
 const manageTeam = httpsCallable(functions, 'manageTeam');
 const setTeamMember = httpsCallable(functions, 'setTeamMember');
@@ -656,6 +659,38 @@ async function loadAdmins(generation) {
       }
       list.append(row);
     }
+    const pendingList = $('pending-admin-list');
+    pendingList.replaceChildren();
+    const pending = result.data.pending || [];
+    $('pending-admin-empty').hidden = pending.length > 0;
+    for (const email of pending) {
+      const row = document.createElement('div');
+      row.className = 'admin-row';
+      const identity = document.createElement('div');
+      const name = document.createElement('strong');
+      name.textContent = email;
+      const detail = document.createElement('span');
+      detail.textContent = 'Waiting for this Google account to sign in';
+      identity.append(name, detail);
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'danger-button';
+      button.textContent = 'Cancel access';
+      button.addEventListener('click', async () => {
+        if (!confirm(`Cancel pending admin access for ${email}?`)) return;
+        button.disabled = true;
+        try {
+          await cancelAdminEmail({ email });
+          status('admin-management-message', 'Pending admin access canceled.');
+          await loadAdmins(generation);
+        } catch (error) {
+          status('admin-management-message', error.message || 'Could not cancel admin access.', true);
+          button.disabled = false;
+        }
+      });
+      row.append(identity, button);
+      pendingList.append(row);
+    }
   } catch (error) {
     if (generation === authGeneration) status('admin-management-message', error.message || 'Could not load admins.', true);
   }
@@ -969,14 +1004,16 @@ onAuthStateChanged(auth, async user => {
       ]), 'Checking admin access');
     } catch (error) {
       if (!error.message?.includes('took too long')) throw error;
-      // The callable checks the same active admin records on the server and
-      // can recover when this browser's Firestore read transport stalls.
-      await timed(calendarStatus(), 'Checking admin access');
+      // A pending admin may claim access even if this browser's Firestore read stalls.
+      const claimed = await timed(claimAdminEmail(), 'Checking admin invitation');
+      if (!claimed.data.admin) await timed(calendarStatus(), 'Checking admin access');
       blockedRecord = { exists: () => false };
       adminRecord = { exists: () => true };
     }
     if (blockedRecord.exists()) return showAccess('This account cannot use Homesteader.');
-    if (!adminRecord.exists()) return showAccess('Only Homesteader admins can view applicant profiles.');
+    if (!adminRecord.exists() && !(await timed(claimAdminEmail(), 'Checking admin invitation')).data.admin) {
+      return showAccess('Only Homesteader admins can view applicant profiles.');
+    }
     if (generation !== authGeneration) return;
     isMasterAdmin = user.email?.toLowerCase() === masterAdminEmail;
     $('admin-management').hidden = !isMasterAdmin;
@@ -987,6 +1024,9 @@ onAuthStateChanged(auth, async user => {
     $('loading').hidden = true;
     $('access-message').hidden = true;
     $('profiles-view').hidden = false;
+    if (isMasterAdmin && location.hash === '#admin-management') {
+      requestAnimationFrame(() => $('admin-management').scrollIntoView({ block: 'start' }));
+    }
     loadCalendarStatus(generation);
     if (isMasterAdmin) questionnaireConfigUnsub = onSnapshot(doc(db, 'questionnaireConfig', 'main'), snapshot => {
       if (generation !== authGeneration) return;
@@ -1064,6 +1104,23 @@ onAuthStateChanged(auth, async user => {
 });
 
 $('sign-out').addEventListener('click', async () => { await signOut(auth); location.href = './'; });
+$('add-admin-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  const button = event.submitter || event.target.querySelector('button[type="submit"]');
+  button.disabled = true;
+  try {
+    const result = await addAdminEmail({ email: $('new-admin-email').value.trim() });
+    if (result.data.state === 'added') {
+      $('new-admin-email').value = '';
+      status('admin-management-message', 'Admin email saved. They will get access when they sign in with that Google account.');
+    } else {
+      status('admin-management-message', result.data.state === 'active' ? 'This account is already an admin.' : 'This email is already waiting for sign-in.');
+    }
+    await loadAdmins(authGeneration);
+  } catch (error) { status('admin-management-message', error.message || 'Could not add admin.', true); }
+  finally { button.disabled = false; }
+});
+$('refresh-admin-list').addEventListener('click', () => loadAdmins(authGeneration));
 $('create-team-form').addEventListener('submit', async event => {
   event.preventDefault();
   const button = event.submitter || event.target.querySelector('button[type="submit"]');

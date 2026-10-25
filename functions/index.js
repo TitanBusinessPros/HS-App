@@ -6,6 +6,7 @@ import vision from '@google-cloud/vision';
 import language from '@google-cloud/language';
 import { createHash } from 'node:crypto';
 import { createCalendarBooking, bookingLockRefs, calendarRevisionRef, intervalsOverlap } from './calendar-booking.js';
+import { normalizeAdminEmail, verifiedGoogleEmail } from './admin-invite.js';
 
 initializeApp();
 const db = getFirestore();
@@ -21,6 +22,10 @@ const applicationLimit = 10000;
 const applicationStatsRef = db.doc('applicationStats/main');
 const questionnaireConfigRef = db.doc('questionnaireConfig/main');
 const masterAdminEmail = 'titanbusinesspros@gmail.com';
+
+function adminInviteRef(email) {
+  return db.doc(`adminInvites/${createHash('sha256').update(email).digest('hex')}`);
+}
 
 function hasMasterEmail(user) {
   return user.token.email?.toLowerCase() === masterAdminEmail;
@@ -39,7 +44,9 @@ async function assertMasterAdmin(user) {
 export const listAdmins = onCall(options, async request => {
   const user = caller(request);
   await assertMasterAdmin(user);
-  const snapshot = await db.collection('admins').get();
+  const [snapshot, inviteSnapshot] = await Promise.all([
+    db.collection('admins').get(), db.collection('adminInvites').get()
+  ]);
   const admins = await Promise.all(snapshot.docs.map(async document => {
     try {
       const account = await auth.getUser(document.id);
@@ -49,7 +56,89 @@ export const listAdmins = onCall(options, async request => {
       return { uid: document.id, email: '', name: '', master: false };
     }
   }));
-  return { admins: admins.sort((a, b) => Number(b.master) - Number(a.master) || a.email.localeCompare(b.email)) };
+  return {
+    admins: admins.sort((a, b) => Number(b.master) - Number(a.master) || a.email.localeCompare(b.email)),
+    pending: inviteSnapshot.docs.map(document => document.data().email).filter(Boolean).sort()
+  };
+});
+
+export const addAdminEmail = onCall(options, async request => {
+  const user = caller(request);
+  await assertMasterAdmin(user);
+  const email = normalizeAdminEmail(request.data?.email);
+  if (!email || email === masterAdminEmail) invalid('Enter another admin’s valid Google email address.');
+  let targetAccount;
+  try { targetAccount = await auth.getUserByEmail(email); }
+  catch (error) {
+    if (error.code === 'auth/invalid-email') invalid('Enter a valid Google email address.');
+    if (error.code !== 'auth/user-not-found') throw error;
+  }
+  if (targetAccount?.disabled) throw new HttpsError('failed-precondition', 'This account is disabled. Enable it before adding admin access.');
+  const inviteRef = adminInviteRef(email);
+  const result = await db.runTransaction(async transaction => {
+    await assertActive(transaction, user.uid);
+    const [master, invite, targetAdmin, targetBlocked] = await Promise.all([
+      transaction.get(db.doc(`admins/${user.uid}`)), transaction.get(inviteRef),
+      targetAccount ? transaction.get(db.doc(`admins/${targetAccount.uid}`)) : Promise.resolve(null),
+      targetAccount ? transaction.get(db.doc(`blockedUsers/${targetAccount.uid}`)) : Promise.resolve(null)
+    ]);
+    if (!master.exists || !hasMasterEmail(user)) throw new HttpsError('permission-denied', 'Master admin access required.');
+    if (targetBlocked?.exists) throw new HttpsError('failed-precondition', 'Unblock this account before adding admin access.');
+    if (targetAdmin?.exists) {
+      if (invite.exists) transaction.delete(inviteRef);
+      return { state: 'active' };
+    }
+    if (invite.exists) return { state: 'pending' };
+    transaction.create(inviteRef, { email, createdBy: user.uid, createdAt: FieldValue.serverTimestamp() });
+    return { state: 'added' };
+  });
+  return result;
+});
+
+export const cancelAdminEmail = onCall(options, async request => {
+  const user = caller(request);
+  await assertMasterAdmin(user);
+  const email = normalizeAdminEmail(request.data?.email);
+  if (!email || email === masterAdminEmail) invalid('Choose a pending admin email to remove.');
+  const inviteRef = adminInviteRef(email);
+  await db.runTransaction(async transaction => {
+    await assertActive(transaction, user.uid);
+    const [master, invite] = await Promise.all([
+      transaction.get(db.doc(`admins/${user.uid}`)), transaction.get(inviteRef)
+    ]);
+    if (!master.exists || !hasMasterEmail(user)) throw new HttpsError('permission-denied', 'Master admin access required.');
+    if (!invite.exists || invite.data().email !== email) throw new HttpsError('not-found', 'This pending admin was already removed.');
+    transaction.delete(inviteRef);
+  });
+  return { removed: true };
+});
+
+export const claimAdminEmail = onCall(options, async request => {
+  const user = caller(request);
+  const candidate = normalizeAdminEmail(user.token.email);
+  if (!candidate || user.token.email_verified !== true) return { admin: false };
+  const inviteRef = adminInviteRef(candidate);
+  if (!(await inviteRef.get()).exists) return { admin: false };
+  const account = await auth.getUser(user.uid);
+  const email = verifiedGoogleEmail(user, account);
+  if (email !== candidate) throw new HttpsError('permission-denied', 'Sign in with the invited Google account.');
+  return db.runTransaction(async transaction => {
+    const [blocked, admin, invite] = await Promise.all([
+      transaction.get(db.doc(`blockedUsers/${user.uid}`)),
+      transaction.get(db.doc(`admins/${user.uid}`)), transaction.get(inviteRef)
+    ]);
+    if (blocked.exists) throw new HttpsError('permission-denied', 'This account has been blocked.');
+    if (admin.exists) {
+      if (invite.exists) transaction.delete(inviteRef);
+      return { admin: true };
+    }
+    if (!invite.exists || invite.data().email !== email) return { admin: false };
+    transaction.create(db.doc(`admins/${user.uid}`), {
+      email, invitedBy: invite.data().createdBy, createdAt: FieldValue.serverTimestamp()
+    });
+    transaction.delete(inviteRef);
+    return { admin: true };
+  });
 });
 
 export const removeAdmin = onCall(options, async request => {
@@ -71,6 +160,8 @@ export const removeAdmin = onCall(options, async request => {
     if (!master.exists || !hasMasterEmail(user)) throw new HttpsError('permission-denied', 'Master admin access required.');
     if (!target.exists) throw new HttpsError('not-found', 'This admin has already been removed.');
     transaction.delete(target.ref);
+    const email = normalizeAdminEmail(targetAccount?.email);
+    if (email) transaction.delete(adminInviteRef(email));
   });
   return { removed: true };
 });

@@ -88,6 +88,7 @@ let rankings = [];
 let rankLimit = 10;
 let rankHasMore = false;
 let rankLoading = false;
+let rankError = '';
 let rankRequestGeneration = 0;
 let selectedRankEntry = null;
 let authGeneration = 0;
@@ -155,6 +156,7 @@ function cleanSubscriptions() {
   summariesUnsub = companySummariesUnsub = blockedUnsub = catalogUnsub = questionnaireConfigUnsub = teamsUnsub = teamMembersUnsub = null;
   ++rankRequestGeneration;
   rankLoading = false;
+  rankError = '';
   rankHasMore = false;
   directory = new Map();
   companySummaries = new Map();
@@ -220,8 +222,8 @@ function renderRanking() {
   $('rank-show-more').textContent = rankLimit === 10 ?
     `View top ${Math.min(25, sorted.length)}` : 'Show top 10';
   $('rank-empty').hidden = sorted.length > 0;
-  $('rank-empty').textContent = rankLoading ? 'Loading skill rankings...' :
-    $('rank-skill').value ? 'No applicants have reported this skill yet.' : 'Choose a skill to see its ranking.';
+  $('rank-empty').textContent = rankError || (rankLoading ? 'Loading skill rankings...' :
+    $('rank-skill').value ? 'No applicants have reported this skill yet.' : 'Choose a skill to see its ranking.');
   const list = $('rank-list');
   list.replaceChildren();
   shown.forEach((entry, index) => {
@@ -234,7 +236,7 @@ function renderRanking() {
     detail.textContent = `${entry.organization || 'Organization not provided'} · ${entry.email || ''} · Reported at ${entry.sourceCompany}`;
     button.append(heading, detail);
     button.addEventListener('click', () => {
-      selectApplicant(entry.uid, entry);
+      selectApplicant(entry.uid, { ...entry, skillName: catalog.byId.get(String($('rank-skill').value))?.name || 'Selected skill' });
       $('admin-detail').scrollIntoView({ behavior: 'smooth', block: 'start' });
     });
     list.append(button);
@@ -518,7 +520,7 @@ function renderSharedQualificationNote() {
   const note = $('shared-qualification-note');
   note.hidden = !selectedRankEntry || selectedRankEntry.uid !== selectedUid;
   note.textContent = note.hidden ? '' :
-    `Shared skill report: ${catalog.byId.get(String($('rank-skill').value))?.name || 'Selected skill'} — ${selectedRankEntry.years} ${selectedRankEntry.years === 1 ? 'year' : 'years'}; ${selectedRankEntry.organization || 'organization not provided'}; reported at ${selectedRankEntry.sourceCompany}. The skill list below shows submissions to this company.`;
+    `Shared skill report: ${selectedRankEntry.skillName} — ${selectedRankEntry.years} ${selectedRankEntry.years === 1 ? 'year' : 'years'}; ${selectedRankEntry.organization || 'organization not provided'}; reported at ${selectedRankEntry.sourceCompany}. The skill list below shows submissions to this company.`;
 }
 
 function localDateTime(date) {
@@ -989,6 +991,7 @@ function renderSkillCatalog() {
     rankings = [];
     rankHasMore = false;
     rankLoading = false;
+    rankError = '';
     rankLimit = 10;
     $('refresh-rankings').hidden = true;
     renderRanking();
@@ -1008,6 +1011,7 @@ async function loadSharedRanking() {
   const currentAuthGeneration = authGeneration;
   rankings = [];
   rankHasMore = false;
+  rankError = '';
   rankLimit = 10;
   rankLoading = Boolean(skillId);
   $('refresh-rankings').hidden = !skillId;
@@ -1021,12 +1025,14 @@ async function loadSharedRanking() {
     rankings = data.rankings || [];
     rankHasMore = data.hasMore === true;
     rankLoading = false;
+    rankError = '';
     renderRanking();
   } catch (error) {
     if (requestGeneration !== rankRequestGeneration) return;
     rankLoading = false;
+    rankError = error.message || 'Could not load skill rankings. Press Refresh rankings to try again.';
     renderRanking();
-    status('page-message', error.message || 'Could not load skill rankings.', true);
+    status('page-message', rankError, true);
   } finally {
     if (requestGeneration === rankRequestGeneration) $('refresh-rankings').disabled = false;
   }

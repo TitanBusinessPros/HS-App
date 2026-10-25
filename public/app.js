@@ -383,11 +383,20 @@ function start() {
         status('auth-message', 'This account has been blocked.', true);
         return;
       }
-      let adminRecord = await getDoc(doc(db, 'admins', user.uid));
+      const adminRecord = await getDoc(doc(db, 'admins', user.uid));
       if (!adminRecord.exists()) {
-        const companyClaim = await claimCompanyEmailCall();
-        if (!companyClaim.data.claimed) await claimAdminEmailCall();
-        adminRecord = await getDoc(doc(db, 'admins', user.uid));
+        // Invitation checks may need remote callable functions. Let ordinary
+        // applicants open their profiles while those checks run.
+        (async () => {
+          try {
+            const companyClaim = await claimCompanyEmailCall();
+            if (!companyClaim.data.claimed) await claimAdminEmailCall();
+            const claimedAdmin = await getDoc(doc(db, 'admins', user.uid));
+            if (claimedAdmin.exists() && generation === authGeneration) location.reload();
+          } catch (error) {
+            if (generation === authGeneration) status('profile-message', `Could not check your admin invitation: ${readableError(error)}`, true);
+          }
+        })();
       }
       isAdmin = adminRecord.exists();
       if (generation !== authGeneration) return;

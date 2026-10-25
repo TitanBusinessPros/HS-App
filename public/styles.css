@@ -68,6 +68,8 @@
 .homestead-page{max-width:1080px}
 .homestead-section{margin-bottom:22px}
 .homestead-description{white-space:pre-wrap;overflow-wrap:anywhere;margin-top:18px}
+#homestead-about-section{text-align:center}
+#homestead-about-section .homestead-description{max-width:780px;margin:18px auto 0}
 .homestead-details{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px;margin-top:20px}
 .homestead-detail{display:grid;gap:7px;border:1px solid #e0e8dc;border-radius:10px;padding:15px;background:#f8fbf6;overflow-wrap:anywhere}
 .homestead-detail strong{color:#234837}

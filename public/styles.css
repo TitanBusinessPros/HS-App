@@ -142,6 +142,7 @@ main{width:100%;flex:1}
 .site-footer{width:100%;margin-top:auto;padding:40px 24px 24px;background:#203b2b;border-top:4px solid #72916f;color:#f5f5ed}
 .footer-inner{max-width:960px;margin:0 auto;display:grid;justify-items:center;gap:22px;text-align:center}
 .footer-contact{display:grid;grid-template-columns:auto auto auto;align-items:center;justify-items:center;justify-content:center;gap:7px 14px;line-height:1.5}
+.footer-created-by{grid-column:1 / -1;font-size:.9rem;color:#c2d3c0}
 .footer-contact strong{grid-column:1 / -1;font-family:Fraunces,Georgia,serif;font-size:1.35rem;color:#fff;margin-bottom:5px}
 .footer-contact > a:nth-of-type(n+3),.footer-contact > span:last-child{grid-column:1 / -1}
 .footer-divider{color:#a9c1a7}

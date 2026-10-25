@@ -4,12 +4,16 @@ import { getFirestore, doc, collection, getDoc, onSnapshot } from 'https://www.g
 import { initializeAppCheck, ReCaptchaEnterpriseProvider } from 'https://www.gstatic.com/firebasejs/13.1.0/firebase-app-check.js';
 import { getFunctions, httpsCallable } from 'https://www.gstatic.com/firebasejs/13.1.0/firebase-functions.js';
 import { firebaseConfig, appCheckSiteKey } from './firebase-config.js';
+import { requestedCompany, companySegments, companyLink } from './company-context.js';
 
 const $ = id => document.getElementById(id);
 const app = initializeApp(firebaseConfig);
 initializeAppCheck(app, { provider: new ReCaptchaEnterpriseProvider(appCheckSiteKey), isTokenAutoRefreshEnabled: true });
 const auth = getAuth(app);
 const db = getFirestore(app);
+let companyId = requestedCompany();
+const scopedDoc = (...parts) => doc(db, ...companySegments(companyId, ...parts));
+const scopedCollection = (...parts) => collection(db, ...companySegments(companyId, ...parts));
 const functions = getFunctions(app, 'us-west2');
 const savePage = httpsCallable(functions, 'saveHomesteadPage');
 const addPhoto = httpsCallable(functions, 'addHomesteadPhoto');
@@ -142,7 +146,7 @@ function renderPhotos() {
 
 function watchPhotos(generation) {
   if (photosUnsub) return;
-  photosUnsub = onSnapshot(collection(db, 'homesteadPhotos'), snapshot => {
+  photosUnsub = onSnapshot(scopedCollection('homesteadPhotos'), snapshot => {
     if (generation !== authGeneration) return;
     photos = snapshot.docs.map(item => ({ id: item.id, ...item.data() }))
       .sort((a, b) => (a.addedAt?.toMillis?.() || 0) - (b.addedAt?.toMillis?.() || 0));
@@ -167,14 +171,18 @@ onAuthStateChanged(auth, async user => {
     const token = await user.getIdTokenResult();
     if (token.claims.firebase?.sign_in_provider !== 'google.com') return showAccess('Sign in with Google to continue.');
     if ((await getDoc(doc(db, 'blockedUsers', user.uid))).exists()) return showAccess('This account cannot use Homesteader.');
-    isAdmin = (await getDoc(doc(db, 'admins', user.uid))).exists();
-    isMasterAdmin = isAdmin && user.email?.toLowerCase() === 'titanbusinesspros@gmail.com';
+    const adminRecord = await getDoc(doc(db, 'admins', user.uid));
+    isAdmin = adminRecord.exists();
+    if (isAdmin) companyId = adminRecord.data().companyId || 'titan';
+    isMasterAdmin = isAdmin && (companyId === 'titan' ?
+      user.email?.toLowerCase() === 'titanbusinesspros@gmail.com' : adminRecord.data().role === 'owner');
+    document.querySelectorAll('a[href="./"]').forEach(link => { link.href = companyLink('./', companyId); });
     if (generation !== authGeneration) return;
     $('admin-editor').hidden = !isMasterAdmin;
     $('loading').hidden = true;
     $('access-message').hidden = true;
     $('page-view').hidden = false;
-    pageUnsub = onSnapshot(doc(db, 'homesteadPage', 'main'), snapshot => {
+    pageUnsub = onSnapshot(scopedDoc('homesteadPage', 'main'), snapshot => {
       if (generation !== authGeneration) return;
       const data = snapshot.exists() ? snapshot.data() : null;
       renderPage(data);
@@ -201,7 +209,7 @@ $('add-topic').addEventListener('click', () => {
 });
 $('homestead-form').addEventListener('submit', async event => {
   event.preventDefault();
-  if (!isMasterAdmin) return status('save-page-message', 'Master admin access required.', true);
+  if (!isMasterAdmin) return status('save-page-message', 'Company owner access required.', true);
   if (wordCount() > 2000) return status('save-page-message', 'Keep the description within 2,000 words.', true);
   const button = $('save-homestead');
   button.disabled = true;
@@ -220,7 +228,7 @@ $('homestead-form').addEventListener('submit', async event => {
 });
 
 $('add-homestead-photos').addEventListener('change', async event => {
-  if (!isMasterAdmin) return status('photo-upload-message', 'Master admin access required.', true);
+  if (!isMasterAdmin) return status('photo-upload-message', 'Company owner access required.', true);
   const files = [...(event.target.files || [])];
   event.target.value = '';
   if (!files.length) return;

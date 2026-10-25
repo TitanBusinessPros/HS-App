@@ -7,6 +7,7 @@ import { firebaseConfig, appCheckSiteKey } from './firebase-config.js';
 import { questions } from './questions.js';
 import { buildSkillCatalog } from './skills.js';
 import { normalizeExternalUrl } from './links.js';
+import { companySegments, companyLink } from './company-context.js';
 
 const $ = id => document.getElementById(id);
 const app = initializeApp(firebaseConfig);
@@ -35,12 +36,22 @@ const removeCalendarBlock = httpsCallable(functions, 'removeCalendarBlock');
 const inviteToBook = httpsCallable(functions, 'inviteToBook');
 const revokeBookingInvite = httpsCallable(functions, 'revokeBookingInvite');
 const cancelCalendarInterview = httpsCallable(functions, 'cancelCalendarInterview');
+const claimCompanyEmail = httpsCallable(functions, 'claimCompanyEmail');
+const getSharedApplicantProfile = httpsCallable(functions, 'getSharedApplicantProfile');
 const masterAdminEmail = 'titanbusinesspros@gmail.com';
 const pageSize = 25;
 const nameCollator = new Intl.Collator(undefined, { sensitivity: 'base' });
 let currentUser = null;
 let isMasterAdmin = false;
+let companyId = 'titan';
+const scopedDoc = (...parts) => doc(db, ...companySegments(companyId, ...parts));
+const scopedCollection = (...parts) => collection(db, ...companySegments(companyId, ...parts));
 let applicants = [];
+let directory = new Map();
+let companySummaries = new Map();
+let companySummariesUnsub = null;
+let selectedSharedProfile = null;
+let selectedApplication = null;
 let blocked = new Map();
 let selectedUid = null;
 let selectedInterviewScheduled = false;
@@ -118,6 +129,8 @@ function cleanSelection() {
   applicantTeamPending = new Set();
   assignApplicantBusy = false;
   profileUnsub = questionnaireUnsub = skillsUnsub = conversationUnsub = messagesUnsub = null;
+  selectedSharedProfile = null;
+  selectedApplication = null;
   selectedUid = null;
   selectedInterviewScheduled = false;
   selectedInterviewSource = '';
@@ -133,8 +146,10 @@ function cleanSelection() {
 
 function cleanSubscriptions() {
   cleanSelection();
-  for (const unsub of [summariesUnsub, blockedUnsub, rankingsUnsub, catalogUnsub, questionnaireConfigUnsub, teamsUnsub, teamMembersUnsub]) if (unsub) unsub();
-  summariesUnsub = blockedUnsub = rankingsUnsub = catalogUnsub = questionnaireConfigUnsub = teamsUnsub = teamMembersUnsub = null;
+  for (const unsub of [summariesUnsub, companySummariesUnsub, blockedUnsub, rankingsUnsub, catalogUnsub, questionnaireConfigUnsub, teamsUnsub, teamMembersUnsub]) if (unsub) unsub();
+  summariesUnsub = companySummariesUnsub = blockedUnsub = rankingsUnsub = catalogUnsub = questionnaireConfigUnsub = teamsUnsub = teamMembersUnsub = null;
+  directory = new Map();
+  companySummaries = new Map();
   rankings = [];
   teams = [];
   rosterMemberIds = [];
@@ -304,7 +319,7 @@ function syncApplicantTeamListeners() {
   for (const team of teams) {
     if (applicantTeamUnsubs.has(team.id)) continue;
     applicantTeamPending.add(team.id);
-    const unsub = onSnapshot(doc(db, 'teams', team.id, 'members', uid), snapshot => {
+    const unsub = onSnapshot(scopedDoc('teams', team.id, 'members', uid), snapshot => {
       if (generation !== authGeneration || selectedUid !== uid) return;
       applicantTeamPending.delete(team.id);
       if (snapshot.exists()) applicantTeamIds.add(team.id);
@@ -404,7 +419,7 @@ function selectTeam(teamId) {
   $('team-members-empty').textContent = 'Loading team members...';
   renderTeamMembers();
   const generation = authGeneration;
-  teamMembersUnsub = onSnapshot(collection(db, 'teams', teamId, 'members'), snapshot => {
+  teamMembersUnsub = onSnapshot(scopedCollection('teams', teamId, 'members'), snapshot => {
     if (generation !== authGeneration || selectedTeamId !== teamId) return;
     rosterMemberIds = snapshot.docs.map(item => item.id);
     $('team-members-empty').textContent = 'No applicants on this team yet.';
@@ -483,7 +498,9 @@ function renderProfile(person) {
     $('detail-photos').append(img);
   });
   $('review-status').value = person.status || 'submitted';
-  $('block-applicant').textContent = blocked.has(selectedUid) ? 'Unblock account' : 'Block account';
+  $('block-applicant').textContent = blocked.has(selectedUid) ?
+    (companyId === 'titan' ? 'Unblock account' : 'Unblock for company') :
+    (companyId === 'titan' ? 'Block account' : 'Block for company');
   $('save-review').disabled = blocked.has(selectedUid);
   $('admin-send').disabled = blocked.has(selectedUid);
   renderInterviewEditor(person.interview);
@@ -635,7 +652,7 @@ async function loadAdmins(generation) {
       const name = document.createElement('strong');
       name.textContent = admin.email || admin.name || `Account ${admin.uid}`;
       const detail = document.createElement('span');
-      detail.textContent = admin.master ? 'Master admin' : 'Admin';
+      detail.textContent = admin.master ? (companyId === 'titan' ? 'Master admin' : 'Company owner') : 'Admin';
       identity.append(name, detail);
       row.append(identity);
       if (!admin.master) {
@@ -809,7 +826,7 @@ $('add-question').addEventListener('click', () => {
 });
 $('questionnaire-editor-form').addEventListener('submit', async event => {
   event.preventDefault();
-  if (!isMasterAdmin) return status('questionnaire-editor-message', 'Master admin access required.', true);
+  if (!isMasterAdmin) return status('questionnaire-editor-message', 'Company owner access required.', true);
   const button = $('save-questionnaire-config');
   button.disabled = true;
   status('questionnaire-editor-message', 'Saving questionnaire...');
@@ -875,30 +892,39 @@ function selectApplicant(uid) {
   syncApplicantTeamListeners();
   renderList();
   const selected = uid;
-  profileUnsub = onSnapshot(doc(db, 'users', uid), snapshot => {
-    if (selectedUid !== selected) return;
-    if (!snapshot.exists()) {
-      cleanSelection();
-      renderList();
-      return;
-    }
-    renderProfile(snapshot.data());
-  }, error => status('page-message', error.message || 'Could not load profile.', true));
-  questionnaireUnsub = onSnapshot(doc(db, 'questionnaires', uid), snapshot => {
+  if (companyId === 'titan') {
+    profileUnsub = onSnapshot(doc(db, 'users', uid), snapshot => {
+      if (selectedUid !== selected) return;
+      if (!snapshot.exists()) { cleanSelection(); renderList(); return; }
+      renderProfile(snapshot.data());
+    }, error => status('page-message', error.message || 'Could not load profile.', true));
+  } else {
+    getSharedApplicantProfile({ uid }).then(result => {
+      if (selectedUid !== selected) return;
+      selectedSharedProfile = result.data;
+      renderProfile({ ...(companySummaries.get(uid) || {}), ...(selectedApplication || {}), ...selectedSharedProfile });
+    }).catch(error => status('page-message', error.message || 'Could not load profile.', true));
+    profileUnsub = onSnapshot(scopedDoc('applications', uid), snapshot => {
+      if (selectedUid !== selected) return;
+      selectedApplication = snapshot.data() || {};
+      if (selectedSharedProfile) renderProfile({ ...(companySummaries.get(uid) || {}), ...selectedApplication, ...selectedSharedProfile });
+    }, error => status('page-message', error.message || 'Could not load application.', true));
+  }
+  questionnaireUnsub = onSnapshot(scopedDoc('questionnaires', uid), snapshot => {
     if (selectedUid === selected) renderQuestionnaire(snapshot.exists() ? snapshot.data() : null);
   }, error => status('page-message', error.message || 'Could not load questionnaire.', true));
-  skillsUnsub = onSnapshot(doc(db, 'skills', uid), snapshot => {
+  skillsUnsub = onSnapshot(scopedDoc('skills', uid), snapshot => {
     if (selectedUid === selected) {
       selectedSkillData = snapshot.exists() ? snapshot.data() : null;
       renderApplicantSkills(selectedSkillData);
     }
   }, error => status('page-message', error.message || 'Could not load skills.', true));
-  conversationUnsub = onSnapshot(doc(db, 'conversations', uid), snapshot => {
+  conversationUnsub = onSnapshot(scopedDoc('conversations', uid), snapshot => {
     if (selectedUid !== selected) return;
     const opened = snapshot.exists();
     $('admin-chat-empty').hidden = opened;
     if (opened && !messagesUnsub) {
-      messagesUnsub = onSnapshot(query(collection(db, 'conversations', uid, 'messages'), orderBy('createdAt', 'asc')), renderMessages, error => status('admin-message-status', error.message || 'Could not load messages.', true));
+      messagesUnsub = onSnapshot(query(scopedCollection('conversations', uid, 'messages'), orderBy('createdAt', 'asc')), renderMessages, error => status('admin-message-status', error.message || 'Could not load messages.', true));
     } else if (!opened && messagesUnsub) {
       messagesUnsub();
       messagesUnsub = null;
@@ -962,7 +988,7 @@ $('rank-skill').addEventListener('change', () => {
   renderRanking();
   const id = $('rank-skill').value;
   if (id === '') return;
-  rankingsUnsub = onSnapshot(collection(db, 'skillRankings', id, 'applicants'), snapshot => {
+  rankingsUnsub = onSnapshot(scopedCollection('skillRankings', id, 'applicants'), snapshot => {
     rankings = snapshot.docs.map(item => ({ uid: item.id, ...item.data() }));
     renderRanking();
   }, error => status('page-message', error.message || 'Could not load skill rankings.', true));
@@ -1005,17 +1031,25 @@ onAuthStateChanged(auth, async user => {
     } catch (error) {
       if (!error.message?.includes('took too long')) throw error;
       // A pending admin may claim access even if this browser's Firestore read stalls.
-      const claimed = await timed(claimAdminEmail(), 'Checking admin invitation');
-      if (!claimed.data.admin) await timed(calendarStatus(), 'Checking admin access');
+      const companyClaim = await timed(claimCompanyEmail(), 'Checking company invitation');
+      if (!companyClaim.data.claimed) await timed(claimAdminEmail(), 'Checking admin invitation');
       blockedRecord = { exists: () => false };
-      adminRecord = { exists: () => true };
+      adminRecord = await timed(getDoc(doc(db, 'admins', user.uid)), 'Loading admin account');
     }
     if (blockedRecord.exists()) return showAccess('This account cannot use Homesteader.');
-    if (!adminRecord.exists() && !(await timed(claimAdminEmail(), 'Checking admin invitation')).data.admin) {
-      return showAccess('Only Homesteader admins can view applicant profiles.');
+    if (!adminRecord.exists()) {
+      const companyClaim = await timed(claimCompanyEmail(), 'Checking company invitation');
+      if (!companyClaim.data.claimed) await timed(claimAdminEmail(), 'Checking admin invitation');
+      adminRecord = await timed(getDoc(doc(db, 'admins', user.uid)), 'Loading admin account');
+      if (!adminRecord.exists()) return showAccess('Only Homesteader admins can view applicant profiles.');
     }
     if (generation !== authGeneration) return;
-    isMasterAdmin = user.email?.toLowerCase() === masterAdminEmail;
+    companyId = adminRecord.data().companyId || 'titan';
+    $('delete-applicant').textContent = companyId === 'titan' ? 'Delete profile and block account' : 'Delete company records and block';
+    isMasterAdmin = companyId === 'titan' ? user.email?.toLowerCase() === masterAdminEmail : adminRecord.data().role === 'owner';
+    $('profiles-company-name').textContent = companyId === 'titan' ? 'Titan Business Pros' :
+      (await timed(getDoc(doc(db, 'companies', companyId)), 'Loading company')).data()?.name || 'Homestead company';
+    document.querySelectorAll('a[href="./"]').forEach(link => { link.href = companyLink('./', companyId); });
     $('admin-management').hidden = !isMasterAdmin;
     $('questionnaire-editor').hidden = !isMasterAdmin;
     $('add-skill-card').hidden = !isMasterAdmin;
@@ -1028,7 +1062,7 @@ onAuthStateChanged(auth, async user => {
       requestAnimationFrame(() => $('admin-management').scrollIntoView({ block: 'start' }));
     }
     loadCalendarStatus(generation);
-    if (isMasterAdmin) questionnaireConfigUnsub = onSnapshot(doc(db, 'questionnaireConfig', 'main'), snapshot => {
+    if (isMasterAdmin) questionnaireConfigUnsub = onSnapshot(scopedDoc('questionnaireConfig', 'main'), snapshot => {
       if (generation !== authGeneration) return;
       const config = snapshot.data();
       const revision = config?.revision || 0;
@@ -1044,12 +1078,12 @@ onAuthStateChanged(auth, async user => {
       renderQuestionnaireEditor();
       $('questionnaire-editor-form').hidden = false;
     }, error => status('questionnaire-editor-message', error.message || 'Could not load questionnaire settings.', true));
-    catalogUnsub = onSnapshot(collection(db, 'skillCatalog'), snapshot => {
+    catalogUnsub = onSnapshot(scopedCollection('skillCatalog'), snapshot => {
       if (generation !== authGeneration) return;
       catalog = buildSkillCatalog(snapshot.docs.map(item => ({ id: item.id, ...item.data() })));
       renderSkillCatalog();
     }, error => status('page-message', error.message || 'Could not load skill catalog.', true));
-    teamsUnsub = onSnapshot(collection(db, 'teams'), snapshot => {
+    teamsUnsub = onSnapshot(scopedCollection('teams'), snapshot => {
       if (generation !== authGeneration) return;
       teams = snapshot.docs.map(item => ({ id: item.id, ...item.data() }))
         .sort((a, b) => nameCollator.compare(a.name || '', b.name || ''));
@@ -1058,9 +1092,10 @@ onAuthStateChanged(auth, async user => {
       else renderTeams();
       syncApplicantTeamListeners();
     }, error => status('roster-message', error.message || 'Could not load teams.', true));
-    summariesUnsub = onSnapshot(collection(db, 'applicantSummaries'), snapshot => {
+    summariesUnsub = onSnapshot(companyId === 'titan' ? scopedCollection('applicantSummaries') : collection(db, 'applicantDirectory'), snapshot => {
       if (generation !== authGeneration) return;
-      applicants = snapshot.docs.map(item => ({ uid: item.id, ...item.data() }))
+      directory = new Map(snapshot.docs.map(item => [item.id, item.data()]));
+      applicants = snapshot.docs.map(item => ({ uid: item.id, ...item.data(), ...(companySummaries.get(item.id) || {}) }))
         .sort((a, b) => nameCollator.compare(a.name || '', b.name || '') || nameCollator.compare(a.email || '', b.email || ''));
       const nextSignature = applicants.map(person => `${person.uid}:${person.interviewAt?.toMillis?.() || ''}`).join('|');
       if (calendarInterviewSignature !== null && nextSignature !== calendarInterviewSignature) {
@@ -1077,7 +1112,17 @@ onAuthStateChanged(auth, async user => {
       renderTeamMembers();
       if (selectedUid) renderApplicantTeams();
     }, error => status('page-message', error.message || 'Could not load profiles.', true));
-    blockedUnsub = onSnapshot(collection(db, 'blockedUsers'), snapshot => {
+    if (companyId !== 'titan') companySummariesUnsub = onSnapshot(scopedCollection('applicantSummaries'), snapshot => {
+      companySummaries = new Map(snapshot.docs.map(item => [item.id, item.data()]));
+      applicants = [...directory].map(([uid, person]) => ({ uid, ...person, ...(companySummaries.get(uid) || {}) }))
+        .sort((a, b) => nameCollator.compare(a.name || '', b.name || ''));
+      const nextSignature = applicants.map(person => `${person.uid}:${person.interviewAt?.toMillis?.() || ''}`).join('|');
+      if (calendarInterviewSignature !== null && nextSignature !== calendarInterviewSignature) loadCalendarStatus(generation, false);
+      calendarInterviewSignature = nextSignature;
+      renderList(); renderRanking(); renderTeamMembers();
+      if (selectedUid) renderApplicantTeams();
+    }, error => status('page-message', error.message || 'Could not load company applications.', true));
+    blockedUnsub = onSnapshot(companyId === 'titan' ? collection(db, 'blockedUsers') : scopedCollection('blockedApplicants'), snapshot => {
       blocked = new Map(snapshot.docs.map(item => [item.id, item.data()]));
       renderList();
       renderBlockedList();
@@ -1086,7 +1131,9 @@ onAuthStateChanged(auth, async user => {
       if (selectedUid) renderApplicantTeams();
       if (selectedUid) {
         $('detail-status').textContent = blocked.has(selectedUid) ? 'Blocked' : statusLabel(applicants.find(person => person.uid === selectedUid)?.status);
-        $('block-applicant').textContent = blocked.has(selectedUid) ? 'Unblock account' : 'Block account';
+        $('block-applicant').textContent = blocked.has(selectedUid) ?
+          (companyId === 'titan' ? 'Unblock account' : 'Unblock for company') :
+          (companyId === 'titan' ? 'Block account' : 'Block for company');
         $('save-review').disabled = blocked.has(selectedUid);
         $('admin-send').disabled = blocked.has(selectedUid);
         $('schedule-interview').disabled = blocked.has(selectedUid) || selectedInterviewSource === 'calendar';
@@ -1309,7 +1356,7 @@ $('cancel-interview').addEventListener('click', async () => {
 
 $('add-skill-form').addEventListener('submit', async event => {
   event.preventDefault();
-  if (!isMasterAdmin) return status('add-skill-message', 'Master admin access required.', true);
+  if (!isMasterAdmin) return status('add-skill-message', 'Company owner access required.', true);
   const button = $('add-skill');
   const name = $('new-skill-name').value.trim();
   const category = $('new-skill-category').value.trim();
@@ -1359,16 +1406,21 @@ $('block-applicant').addEventListener('click', async () => {
   const action = blocked.has(selectedUid) ? 'unblock' : 'block';
   const button = $('block-applicant');
   button.disabled = true;
-  try { await manageApplicant({ uid: selectedUid, action }); status('account-action-message', action === 'block' ? 'Account blocked.' : 'Account unblocked.'); }
+  try { await manageApplicant({ uid: selectedUid, action }); status('account-action-message',
+    companyId === 'titan' ? (action === 'block' ? 'Account blocked.' : 'Account unblocked.') :
+      (action === 'block' ? 'Applicant blocked for this company.' : 'Applicant unblocked for this company.')); }
   catch (error) { status('account-action-message', error.message || 'Could not update account.', true); }
   finally { button.disabled = false; }
 });
 
 $('delete-applicant').addEventListener('click', async () => {
-  if (!selectedUid || !confirm('Delete this profile, questionnaire, and conversation, and block the account from returning?')) return;
+  if (!selectedUid || !confirm(companyId === 'titan' ?
+    'Delete this profile, questionnaire, and conversation, and block the account from returning?' :
+    'Delete this company’s questionnaire, skills, messages, interview, and team assignments, and block the applicant from this company? Their shared profile remains available to other companies.')) return;
   const button = $('delete-applicant');
   button.disabled = true;
-  try { await manageApplicant({ uid: selectedUid, action: 'delete' }); status('page-message', 'Profile deleted and account blocked.'); }
+  try { await manageApplicant({ uid: selectedUid, action: 'delete' }); status('page-message',
+    companyId === 'titan' ? 'Profile deleted and account blocked.' : 'Company records deleted and applicant blocked for this company.'); }
   catch (error) { status('account-action-message', error.message || 'Could not delete profile.', true); }
   finally { button.disabled = false; }
 });

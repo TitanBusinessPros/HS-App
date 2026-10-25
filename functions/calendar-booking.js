@@ -101,15 +101,21 @@ function activeInvite(profile) {
   return invite;
 }
 
-export function createCalendarBooking({ db, caller, assertAdmin, checkText, options }) {
+export function createCalendarBooking({ db, caller, assertAdmin, checkText, options,
+  companyIdForAdminUid, requestedCompanyId, companyDoc, companyCollection,
+  applicationRef, companySummaryRef, primaryCompanyId }) {
+  const conversationRef = (companyId, uid) => companyDoc(companyId, `conversations/${uid}`);
+  const companyBlockedRef = (companyId, uid) => companyDoc(companyId, `blockedApplicants/${uid}`);
+  const companyIdOfAdmin = snapshot => snapshot.data()?.companyId || primaryCompanyId;
   async function calendarData(adminUid) {
-    await assertAdmin(adminUid);
+    const companyId = await companyIdForAdminUid(adminUid);
     // Read the revision before the data so a concurrent calendar edit causes
     // the later transaction to reject a stale view of the schedule.
     const revision = (await calendarRevisionRef(db, adminUid).get()).data()?.revision || 0;
     const [settings, blocks, interviews] = await Promise.all([
       availabilityRef(db, adminUid).get(), blocksCollection(db, adminUid).get(),
-      db.collection('users').where('interview.contactAdminUid', '==', adminUid)
+      companyCollection(companyId, companyId === primaryCompanyId ? 'users' : 'applications')
+        .where('interview.contactAdminUid', '==', adminUid)
         .select('profile.name', 'interview').get()
     ]);
     const availability = settings.data()?.availability || null;
@@ -117,7 +123,7 @@ export function createCalendarBooking({ db, caller, assertAdmin, checkText, opti
       .filter(block => block.end?.toMillis?.() > Date.now());
     const upcomingInterviews = interviews.docs.map(doc => ({ uid: doc.id, name: doc.data().profile?.name || 'Applicant', ...doc.data().interview }))
       .filter(item => item.scheduledAt?.toMillis?.() > Date.now());
-    return { availability, blocks: upcomingBlocks, interviews: upcomingInterviews, revision };
+    return { availability, blocks: upcomingBlocks, interviews: upcomingInterviews, revision, companyId };
   }
   async function availableSlots(adminUid, now = Date.now()) {
     const data = await calendarData(adminUid);
@@ -130,7 +136,8 @@ export function createCalendarBooking({ db, caller, assertAdmin, checkText, opti
           (interview.durationMinutes || 60) * minuteMs)
       }))
     ];
-    return { availability: data.availability, slots: generateSlots(data.availability, busy, now), revision: data.revision };
+    return { availability: data.availability, slots: generateSlots(data.availability, busy, now),
+      revision: data.revision, companyId: data.companyId };
   }
 
   const calendarStatus = onCall(options, async request => {
@@ -202,6 +209,7 @@ export function createCalendarBooking({ db, caller, assertAdmin, checkText, opti
   const inviteToBook = onCall(options, async request => {
     const user = caller(request);
     await assertAdmin(user.uid);
+    const companyId = await companyIdForAdminUid(user.uid);
     const uid = request.data?.uid;
     const mode = request.data?.mode;
     const note = String(request.data?.note || '').trim();
@@ -212,24 +220,27 @@ export function createCalendarBooking({ db, caller, assertAdmin, checkText, opti
     if (!(await availabilityRef(db, user.uid).get()).data()?.availability) unavailable('Save your bookable hours first.');
     if (note) await checkText(note);
     await db.runTransaction(async transaction => {
-      const profileRef = db.doc(`users/${uid}`);
-      const conversationRef = db.doc(`conversations/${uid}`);
-      const [blocked, profile, conversation] = await Promise.all([
-        transaction.get(db.doc(`blockedUsers/${uid}`)), transaction.get(profileRef), transaction.get(conversationRef)
+      const profileRef = applicationRef(companyId, uid);
+      const conversation = conversationRef(companyId, uid);
+      const [blocked, companyBlocked, sharedProfile, profile, existingConversation] = await Promise.all([
+        transaction.get(db.doc(`blockedUsers/${uid}`)),
+        companyId === primaryCompanyId ? Promise.resolve(null) : transaction.get(companyBlockedRef(companyId, uid)),
+        transaction.get(db.doc(`users/${uid}`)), transaction.get(profileRef), transaction.get(conversation)
       ]);
-      if (blocked.exists || !profile.exists) unavailable('This applicant is unavailable.');
-      if (profile.data().interview?.scheduledAt) unavailable('Cancel the existing interview before inviting a new booking.');
+      if (blocked.exists || companyBlocked?.exists || !sharedProfile.exists) unavailable('This applicant is unavailable.');
+      if (profile.data()?.interview?.scheduledAt) unavailable('Cancel the existing interview before inviting a new booking.');
       const invite = {
         adminUid: user.uid, adminEmail: user.token.email || 'Homesteader admin', mode, note, meetingLink,
         status: 'open', createdAt: Timestamp.now(), expiresAt: Timestamp.fromMillis(Date.now() + 7 * 24 * 60 * minuteMs)
       };
-      transaction.update(profileRef, { bookingInvite: invite });
-      const message = conversationRef.collection('messages').doc();
-      if (!conversation.exists) transaction.create(conversationRef, {
+      transaction.set(profileRef, { bookingInvite: invite,
+        ...(companyId === primaryCompanyId ? {} : { profile: sharedProfile.data().profile || {} }) }, { merge: true });
+      const message = conversation.collection('messages').doc();
+      if (!existingConversation.exists) transaction.create(conversation, {
         participantUid: uid, openedBy: user.uid, openedAt: FieldValue.serverTimestamp(),
         firstMessageId: message.id, contactAdminUid: user.uid
       });
-      else transaction.update(conversationRef, { contactAdminUid: user.uid });
+      else transaction.update(conversation, { contactAdminUid: user.uid });
       transaction.create(message, {
         senderUid: user.uid, senderRole: 'admin', createdAt: FieldValue.serverTimestamp(),
         text: `Please choose an available time for your ${mode === 'in-person' ? 'in-person' : mode} interview on your Homesteader profile.${note ? `\n${note}` : ''}`
@@ -241,15 +252,16 @@ export function createCalendarBooking({ db, caller, assertAdmin, checkText, opti
   const revokeBookingInvite = onCall(options, async request => {
     const user = caller(request);
     await assertAdmin(user.uid);
+    const companyId = await companyIdForAdminUid(user.uid);
     const uid = request.data?.uid;
     if (typeof uid !== 'string' || !uid || uid.includes('/')) invalid('Choose an applicant.');
     await db.runTransaction(async transaction => {
-      const profileRef = db.doc(`users/${uid}`);
-      const conversationRef = db.doc(`conversations/${uid}`);
-      const [profile, conversation] = await Promise.all([transaction.get(profileRef), transaction.get(conversationRef)]);
+      const profileRef = applicationRef(companyId, uid);
+      const conversation = conversationRef(companyId, uid);
+      const [profile, existingConversation] = await Promise.all([transaction.get(profileRef), transaction.get(conversation)]);
       if (profile.data()?.bookingInvite?.status !== 'open') unavailable('There is no open booking invitation.');
       transaction.update(profileRef, { bookingInvite: FieldValue.delete() });
-      if (conversation.exists) transaction.create(conversationRef.collection('messages').doc(), {
+      if (existingConversation.exists) transaction.create(conversation.collection('messages').doc(), {
         senderUid: user.uid, senderRole: 'admin', createdAt: FieldValue.serverTimestamp(),
         text: 'The invitation to choose an interview time has been withdrawn. An admin will contact you if a new time is available.'
       });
@@ -259,40 +271,56 @@ export function createCalendarBooking({ db, caller, assertAdmin, checkText, opti
 
   const listInterviewSlots = onCall(options, async request => {
     const user = caller(request);
-    const [blocked, admin, profile] = await Promise.all([
-      db.doc(`blockedUsers/${user.uid}`).get(), db.doc(`admins/${user.uid}`).get(), db.doc(`users/${user.uid}`).get()
+    const companyId = await requestedCompanyId(request.data?.companyId);
+    const [blocked, companyBlocked, admin, sharedProfile, profile] = await Promise.all([
+      db.doc(`blockedUsers/${user.uid}`).get(),
+      companyId === primaryCompanyId ? Promise.resolve(null) : companyBlockedRef(companyId, user.uid).get(),
+      db.doc(`admins/${user.uid}`).get(), db.doc(`users/${user.uid}`).get(),
+      applicationRef(companyId, user.uid).get()
     ]);
-    if (blocked.exists || admin.exists || !profile.exists) throw new HttpsError('permission-denied', 'Applicant access required.');
+    if (blocked.exists || companyBlocked?.exists || admin.exists || !sharedProfile.exists || !profile.exists) {
+      throw new HttpsError('permission-denied', 'Applicant access required.');
+    }
     const invite = activeInvite(profile.data());
     const result = await availableSlots(invite.adminUid);
+    if (result.companyId !== companyId) unavailable('This booking invitation belongs to another homestead company.');
     return { slots: result.slots, timeZone: result.availability.timeZone, timeZoneLabel: result.availability.timeZoneLabel };
   });
 
   const bookInterviewSlot = onCall(options, async request => {
     const user = caller(request);
+    const companyId = await requestedCompanyId(request.data?.companyId);
     const start = request.data?.start;
     const startMs = Date.parse(start);
     if (typeof start !== 'string' || !Number.isFinite(startMs) ||
         new Date(startMs).toISOString() !== start || startMs % quarterHour) invalid('Choose an available time.');
-    const profileRef = db.doc(`users/${user.uid}`);
-    const [blocked, admin, profile] = await Promise.all([
-      db.doc(`blockedUsers/${user.uid}`).get(), db.doc(`admins/${user.uid}`).get(), profileRef.get()
+    const profileRef = applicationRef(companyId, user.uid);
+    const [blocked, companyBlocked, admin, sharedProfile, profile] = await Promise.all([
+      db.doc(`blockedUsers/${user.uid}`).get(),
+      companyId === primaryCompanyId ? Promise.resolve(null) : companyBlockedRef(companyId, user.uid).get(),
+      db.doc(`admins/${user.uid}`).get(), db.doc(`users/${user.uid}`).get(), profileRef.get()
     ]);
-    if (blocked.exists || admin.exists || !profile.exists) throw new HttpsError('permission-denied', 'Applicant access required.');
+    if (blocked.exists || companyBlocked?.exists || admin.exists || !sharedProfile.exists || !profile.exists) {
+      throw new HttpsError('permission-denied', 'Applicant access required.');
+    }
     const invite = activeInvite(profile.data());
     const result = await availableSlots(invite.adminUid);
+    if (result.companyId !== companyId) unavailable('This booking invitation belongs to another homestead company.');
     if (!result.slots.includes(start)) unavailable('That time is no longer available. Choose another.');
     const endMs = startMs + result.availability.durationMinutes * minuteMs;
     const refs = bookingLockRefs(db, invite.adminUid, startMs, endMs + result.availability.bufferMinutes * minuteMs);
     const revisionRef = calendarRevisionRef(db, invite.adminUid);
     await db.runTransaction(async transaction => {
-      const conversationRef = db.doc(`conversations/${user.uid}`);
-      const [current, adminDoc, settings, currentBlock, conversation, revision, ...locks] = await Promise.all([
+      const conversation = conversationRef(companyId, user.uid);
+      const [current, adminDoc, settings, currentBlock, companyBlock, existingConversation, revision, ...locks] = await Promise.all([
         transaction.get(profileRef), transaction.get(db.doc(`admins/${invite.adminUid}`)),
         transaction.get(availabilityRef(db, invite.adminUid)), transaction.get(db.doc(`blockedUsers/${user.uid}`)),
-        transaction.get(conversationRef), transaction.get(revisionRef), ...refs.map(ref => transaction.get(ref))
+        companyId === primaryCompanyId ? Promise.resolve(null) : transaction.get(companyBlockedRef(companyId, user.uid)),
+        transaction.get(conversation), transaction.get(revisionRef), ...refs.map(ref => transaction.get(ref))
       ]);
-      if (!adminDoc.exists || currentBlock.exists) unavailable('This booking is unavailable.');
+      if (!adminDoc.exists || companyIdOfAdmin(adminDoc) !== companyId || currentBlock.exists || companyBlock?.exists) {
+        unavailable('This booking is unavailable.');
+      }
       const latestInvite = activeInvite(current.data());
       if (latestInvite.adminUid !== invite.adminUid ||
           latestInvite.createdAt.toMillis() !== invite.createdAt.toMillis()) unavailable('The invitation changed. Refresh and try again.');
@@ -314,7 +342,7 @@ export function createCalendarBooking({ db, caller, assertAdmin, checkText, opti
         updatedAt: FieldValue.serverTimestamp()
       };
       transaction.update(profileRef, { interview, bookingInvite: FieldValue.delete() });
-      transaction.set(db.doc(`applicantSummaries/${user.uid}`), {
+      transaction.set(companySummaryRef(companyId, user.uid), {
         interviewMode: invite.mode, interviewAt: Timestamp.fromMillis(startMs)
       }, { merge: true });
       refs.forEach(ref => transaction.set(ref, {
@@ -322,8 +350,8 @@ export function createCalendarBooking({ db, caller, assertAdmin, checkText, opti
         expiresAt: Timestamp.fromMillis(endMs + result.availability.bufferMinutes * minuteMs)
       }));
       transaction.set(revisionRef, { revision: FieldValue.increment(1) }, { merge: true });
-      const message = conversationRef.collection('messages').doc();
-      if (!conversation.exists) transaction.create(conversationRef, {
+      const message = conversation.collection('messages').doc();
+      if (!existingConversation.exists) transaction.create(conversation, {
         participantUid: user.uid, openedBy: invite.adminUid, openedAt: FieldValue.serverTimestamp(),
         firstMessageId: message.id, contactAdminUid: invite.adminUid
       });
@@ -338,26 +366,27 @@ export function createCalendarBooking({ db, caller, assertAdmin, checkText, opti
   const cancelCalendarInterview = onCall(options, async request => {
     const user = caller(request);
     await assertAdmin(user.uid);
+    const companyId = await companyIdForAdminUid(user.uid);
     const uid = request.data?.uid;
     if (typeof uid !== 'string' || !uid || uid.includes('/')) invalid('Choose an applicant.');
-    const profileRef = db.doc(`users/${uid}`);
+    const profileRef = applicationRef(companyId, uid);
     await db.runTransaction(async transaction => {
-      const conversationRef = db.doc(`conversations/${uid}`);
-      const [profile, conversation] = await Promise.all([transaction.get(profileRef), transaction.get(conversationRef)]);
+      const conversation = conversationRef(companyId, uid);
+      const [profile, existingConversation] = await Promise.all([transaction.get(profileRef), transaction.get(conversation)]);
       const interview = profile.data()?.interview;
       if (interview?.source !== 'calendar') unavailable('No booked interview is scheduled.');
       const revisionRef = calendarRevisionRef(db, interview.contactAdminUid);
       const refs = (interview.bookingLockIds || []).map(id => db.doc(`calendarSlotLocks/${id}`));
       const [, ...locks] = await Promise.all([transaction.get(revisionRef), ...refs.map(ref => transaction.get(ref))]);
       transaction.update(profileRef, { interview: FieldValue.delete() });
-      transaction.set(db.doc(`applicantSummaries/${uid}`), {
+      transaction.set(companySummaryRef(companyId, uid), {
         interviewMode: FieldValue.delete(), interviewAt: FieldValue.delete()
       }, { merge: true });
       locks.forEach((lock, index) => {
         if (lock.data()?.applicantUid === uid) transaction.delete(refs[index]);
       });
       transaction.set(revisionRef, { revision: FieldValue.increment(1) }, { merge: true });
-      if (conversation.exists) transaction.create(conversationRef.collection('messages').doc(), {
+      if (existingConversation.exists) transaction.create(conversation.collection('messages').doc(), {
         senderUid: user.uid, senderRole: 'admin', createdAt: FieldValue.serverTimestamp(),
         text: 'Your booked interview has been canceled. An admin will contact you about a new time.'
       });

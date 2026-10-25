@@ -113,6 +113,10 @@
 #admin-view{text-align:center;max-width:1080px;margin:36px auto}
 #admin-view .button-link{margin:8px 5px 0}
 .admin-home-management{max-width:700px;margin:38px auto 0;padding-top:30px;border-top:1px solid #e2e9df}
+.company-picker{max-width:700px;margin:0 auto 30px;text-align:center}
+.company-picker label{margin-top:0}
+.company-picker select{max-width:480px}
+.company-picker .field-help{max-width:580px;margin:12px auto 0}
 .admin-home-management .muted{margin:0 auto 18px}
 .admin-home-management .text-button{display:inline-block;margin-top:10px}
 .admin-roster{margin-top:38px;padding-top:30px;border-top:1px solid #e2e9df}

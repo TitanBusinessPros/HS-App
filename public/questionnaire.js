@@ -5,12 +5,16 @@ import { initializeAppCheck, ReCaptchaEnterpriseProvider } from 'https://www.gst
 import { getFunctions, httpsCallable } from 'https://www.gstatic.com/firebasejs/13.1.0/firebase-functions.js';
 import { firebaseConfig, appCheckSiteKey } from './firebase-config.js';
 import { questions } from './questions.js';
+import { requestedCompany, companySegments, companyLink } from './company-context.js';
 
 const $ = id => document.getElementById(id);
 const app = initializeApp(firebaseConfig);
 initializeAppCheck(app, { provider: new ReCaptchaEnterpriseProvider(appCheckSiteKey), isTokenAutoRefreshEnabled: true });
 const auth = getAuth(app);
 const db = getFirestore(app);
+const companyId = requestedCompany();
+const scopedDoc = (...parts) => doc(db, ...companySegments(companyId, ...parts));
+document.querySelectorAll('a[href="./"]').forEach(link => { link.href = companyLink('./', companyId); });
 const saveQuestionnaire = httpsCallable(getFunctions(app, 'us-west2'), 'saveQuestionnaire');
 let currentQuestions = questions;
 let currentRevision = 0;
@@ -126,10 +130,10 @@ onAuthStateChanged(auth, async user => {
     if ((await getDoc(doc(db, 'blockedUsers', user.uid))).exists()) return showAccess('This account cannot use Homesteader.');
     if ((await getDoc(doc(db, 'admins', user.uid))).exists()) return showAccess('Admins do not need an applicant questionnaire.');
     if (!(await getDoc(doc(db, 'users', user.uid))).exists()) return showAccess('Save your applicant profile first, then return to the questionnaire.');
-    const saved = await getDoc(doc(db, 'questionnaires', user.uid));
+    const saved = await getDoc(scopedDoc('questionnaires', user.uid));
     if (generation !== authGeneration) return;
     savedData = saved.exists() ? saved.data() : null;
-    configUnsub = onSnapshot(doc(db, 'questionnaireConfig', 'main'), snapshot => {
+    configUnsub = onSnapshot(scopedDoc('questionnaireConfig', 'main'), snapshot => {
       if (generation !== authGeneration) return;
       const config = snapshot.data();
       if (config?.enabled === false) return showAccess('The homesteading questionnaire is currently turned off.');
@@ -143,7 +147,7 @@ onAuthStateChanged(auth, async user => {
         questionValues(currentQuestions) === questionValues(questions);
       const savedAnswers = (config && savedData?.version === 2 && savedData.revision === currentRevision) ||
         legacyQuestionsMatch ? savedData.answers : [];
-      $('questionnaire-intro').textContent = `Answer these ${currentQuestions.length} questions about your experience, availability, and approach to homesteading. Choose a preset answer or write your own for each question. Only you and Homesteader admins can see your answers. You can return to update them.`;
+      $('questionnaire-intro').textContent = `Answer these ${currentQuestions.length} questions about your experience, availability, and approach to homesteading. Choose a preset answer or write your own for each question. Only you and this company's admins can see these answers. You can return to update them.`;
       renderQuestions(previousRevision === currentRevision && pendingAnswers.some(answer => answer !== null) ? pendingAnswers : savedAnswers);
       $('loading').hidden = true;
       $('access-message').hidden = true;
@@ -174,7 +178,7 @@ $('questionnaire-form').addEventListener('submit', async event => {
   message.textContent = 'Saving your answers...';
   message.className = 'message';
   try {
-    await saveQuestionnaire({ answers, revision: submittedRevision });
+    await saveQuestionnaire({ answers, revision: submittedRevision, companyId });
     savedData = { version: submittedRevision ? 2 : 1, revision: submittedRevision, answers };
     message.className = 'message success';
     message.textContent = submittedRevision === currentRevision ?

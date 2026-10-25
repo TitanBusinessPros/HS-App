@@ -1,7 +1,7 @@
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import { initializeApp } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
-import { getFirestore, FieldValue, Timestamp } from 'firebase-admin/firestore';
+import { getFirestore, FieldPath, FieldValue, Timestamp } from 'firebase-admin/firestore';
 import vision from '@google-cloud/vision';
 import language from '@google-cloud/language';
 import { createHash } from 'node:crypto';
@@ -20,8 +20,64 @@ const reviewStatuses = new Set(['submitted', 'reviewing', 'good-fit', 'declined'
 const customSkillPattern = /^custom_[a-f0-9]{32}$/;
 const applicationLimit = 10000;
 const applicationStatsRef = db.doc('applicationStats/main');
-const questionnaireConfigRef = db.doc('questionnaireConfig/main');
 const masterAdminEmail = 'titanbusinesspros@gmail.com';
+const primaryCompanyId = 'titan';
+
+function companyIdOf(admin) {
+  return admin?.data()?.companyId || primaryCompanyId;
+}
+
+function companyPath(companyId, path) {
+  return companyId === primaryCompanyId ? path : `companies/${companyId}/${path}`;
+}
+
+function companyDoc(companyId, path) { return db.doc(companyPath(companyId, path)); }
+function companyCollection(companyId, path) { return db.collection(companyPath(companyId, path)); }
+function applicationRef(companyId, uid) {
+  return companyDoc(companyId, companyId === primaryCompanyId ? `users/${uid}` : `applications/${uid}`);
+}
+function companySummaryRef(companyId, uid) { return companyDoc(companyId, `applicantSummaries/${uid}`); }
+
+function directoryEntry(profile) {
+  return {
+    name: profile.profile?.name || 'Unnamed', location: profile.profile?.location || '',
+    email: profile.email || '', updatedAt: profile.updatedAt || FieldValue.serverTimestamp()
+  };
+}
+
+async function requestedCompanyId(value) {
+  const companyId = value || primaryCompanyId;
+  if (companyId === primaryCompanyId) return companyId;
+  if (typeof companyId !== 'string' || !/^[A-Za-z0-9]{20}$/.test(companyId)) invalid('Choose a homestead company.');
+  const company = await db.doc(`companies/${companyId}`).get();
+  if (!company.exists || company.data().active === false) throw new HttpsError('not-found', 'This homestead company is unavailable.');
+  return companyId;
+}
+
+async function companyAdmin(user) {
+  const [blocked, admin] = await Promise.all([
+    db.doc(`blockedUsers/${user.uid}`).get(), db.doc(`admins/${user.uid}`).get()
+  ]);
+  if (blocked.exists || !admin.exists) throw new HttpsError('permission-denied', 'Admin access required.');
+  const companyId = companyIdOf(admin);
+  if (companyId !== primaryCompanyId) await requestedCompanyId(companyId);
+  return { companyId, owner: companyId === primaryCompanyId ? hasMasterEmail(user) : admin.data().role === 'owner' };
+}
+
+async function companyOwner(user) {
+  const context = await companyAdmin(user);
+  if (!context.owner) throw new HttpsError('permission-denied', 'Company owner access required.');
+  if (context.companyId === primaryCompanyId) await assertMasterAdmin(user);
+  else {
+    const company = await db.doc(`companies/${context.companyId}`).get();
+    if (company.data()?.ownerUid !== user.uid) throw new HttpsError('permission-denied', 'Company owner access required.');
+  }
+  return context.companyId;
+}
+
+function companyInviteRef(email) {
+  return db.doc(`companyInvites/${createHash('sha256').update(email).digest('hex')}`);
+}
 
 function adminInviteRef(email) {
   return db.doc(`adminInvites/${createHash('sha256').update(email).digest('hex')}`);
@@ -43,11 +99,11 @@ async function assertMasterAdmin(user) {
 
 export const listAdmins = onCall(options, async request => {
   const user = caller(request);
-  await assertMasterAdmin(user);
+  const companyId = await companyOwner(user);
   const [snapshot, inviteSnapshot] = await Promise.all([
     db.collection('admins').get(), db.collection('adminInvites').get()
   ]);
-  const admins = await Promise.all(snapshot.docs.map(async document => {
+  const admins = await Promise.all(snapshot.docs.filter(document => companyIdOf(document) === companyId).map(async document => {
     try {
       const account = await auth.getUser(document.id);
       return { uid: document.id, email: account.email || '', name: account.displayName || '', master: document.id === user.uid };
@@ -58,13 +114,14 @@ export const listAdmins = onCall(options, async request => {
   }));
   return {
     admins: admins.sort((a, b) => Number(b.master) - Number(a.master) || a.email.localeCompare(b.email)),
-    pending: inviteSnapshot.docs.map(document => document.data().email).filter(Boolean).sort()
+    pending: inviteSnapshot.docs.filter(document => (document.data().companyId || primaryCompanyId) === companyId)
+      .map(document => document.data().email).filter(Boolean).sort()
   };
 });
 
 export const addAdminEmail = onCall(options, async request => {
   const user = caller(request);
-  await assertMasterAdmin(user);
+  const companyId = await companyOwner(user);
   const email = normalizeAdminEmail(request.data?.email);
   if (!email || email === masterAdminEmail) invalid('Enter another admin’s valid Google email address.');
   let targetAccount;
@@ -77,19 +134,32 @@ export const addAdminEmail = onCall(options, async request => {
   const inviteRef = adminInviteRef(email);
   const result = await db.runTransaction(async transaction => {
     await assertActive(transaction, user.uid);
-    const [master, invite, targetAdmin, targetBlocked] = await Promise.all([
+    const [owner, invite, targetAdmin, targetBlocked, companyInvite] = await Promise.all([
       transaction.get(db.doc(`admins/${user.uid}`)), transaction.get(inviteRef),
       targetAccount ? transaction.get(db.doc(`admins/${targetAccount.uid}`)) : Promise.resolve(null),
-      targetAccount ? transaction.get(db.doc(`blockedUsers/${targetAccount.uid}`)) : Promise.resolve(null)
+      targetAccount ? transaction.get(db.doc(`blockedUsers/${targetAccount.uid}`)) : Promise.resolve(null),
+      transaction.get(companyInviteRef(email))
     ]);
-    if (!master.exists || !hasMasterEmail(user)) throw new HttpsError('permission-denied', 'Master admin access required.');
+    if (!owner.exists || companyIdOf(owner) !== companyId ||
+        (companyId === primaryCompanyId ? !hasMasterEmail(user) : owner.data().role !== 'owner')) {
+      throw new HttpsError('permission-denied', 'Company owner access required.');
+    }
+    if (companyInvite.exists) throw new HttpsError('already-exists', 'This email is already invited to own a homestead company.');
     if (targetBlocked?.exists) throw new HttpsError('failed-precondition', 'Unblock this account before adding admin access.');
     if (targetAdmin?.exists) {
-      if (invite.exists) transaction.delete(inviteRef);
-      return { state: 'active' };
+      if (companyIdOf(targetAdmin) === companyId) {
+        if (invite.exists) transaction.delete(inviteRef);
+        return { state: 'active' };
+      }
+      throw new HttpsError('already-exists', 'This account already belongs to another homestead company.');
     }
-    if (invite.exists) return { state: 'pending' };
-    transaction.create(inviteRef, { email, createdBy: user.uid, createdAt: FieldValue.serverTimestamp() });
+    if (invite.exists) {
+      if ((invite.data().companyId || primaryCompanyId) !== companyId) {
+        throw new HttpsError('already-exists', 'This email is already invited to another homestead company.');
+      }
+      return { state: 'pending' };
+    }
+    transaction.create(inviteRef, { email, companyId, createdBy: user.uid, createdAt: FieldValue.serverTimestamp() });
     return { state: 'added' };
   });
   return result;
@@ -97,17 +167,23 @@ export const addAdminEmail = onCall(options, async request => {
 
 export const cancelAdminEmail = onCall(options, async request => {
   const user = caller(request);
-  await assertMasterAdmin(user);
+  const companyId = await companyOwner(user);
   const email = normalizeAdminEmail(request.data?.email);
   if (!email || email === masterAdminEmail) invalid('Choose a pending admin email to remove.');
   const inviteRef = adminInviteRef(email);
   await db.runTransaction(async transaction => {
     await assertActive(transaction, user.uid);
-    const [master, invite] = await Promise.all([
+    const [owner, invite] = await Promise.all([
       transaction.get(db.doc(`admins/${user.uid}`)), transaction.get(inviteRef)
     ]);
-    if (!master.exists || !hasMasterEmail(user)) throw new HttpsError('permission-denied', 'Master admin access required.');
-    if (!invite.exists || invite.data().email !== email) throw new HttpsError('not-found', 'This pending admin was already removed.');
+    if (!owner.exists || companyIdOf(owner) !== companyId ||
+        (companyId === primaryCompanyId ? !hasMasterEmail(user) : owner.data().role !== 'owner')) {
+      throw new HttpsError('permission-denied', 'Company owner access required.');
+    }
+    if (!invite.exists || invite.data().email !== email ||
+        (invite.data().companyId || primaryCompanyId) !== companyId) {
+      throw new HttpsError('not-found', 'This pending admin was already removed.');
+    }
     transaction.delete(inviteRef);
   });
   return { removed: true };
@@ -129,21 +205,143 @@ export const claimAdminEmail = onCall(options, async request => {
     ]);
     if (blocked.exists) throw new HttpsError('permission-denied', 'This account has been blocked.');
     if (admin.exists) {
+      if (invite.exists && companyIdOf(admin) !== (invite.data().companyId || primaryCompanyId)) {
+        throw new HttpsError('already-exists', 'This account already belongs to another homestead company.');
+      }
       if (invite.exists) transaction.delete(inviteRef);
-      return { admin: true };
+      return { admin: true, companyId: companyIdOf(admin) };
     }
     if (!invite.exists || invite.data().email !== email) return { admin: false };
+    const companyId = invite.data().companyId || primaryCompanyId;
+    if (companyId !== primaryCompanyId) {
+      const company = await transaction.get(db.doc(`companies/${companyId}`));
+      if (!company.exists || company.data().active === false) throw new HttpsError('failed-precondition', 'This homestead company is unavailable.');
+    }
     transaction.create(db.doc(`admins/${user.uid}`), {
-      email, invitedBy: invite.data().createdBy, createdAt: FieldValue.serverTimestamp()
+      email, companyId, role: 'admin', invitedBy: invite.data().createdBy, createdAt: FieldValue.serverTimestamp()
     });
     transaction.delete(inviteRef);
-    return { admin: true };
+    return { admin: true, companyId };
   });
+});
+
+export const listCompanies = onCall(options, async request => {
+  const user = caller(request);
+  await assertMasterAdmin(user);
+  const [companies, invitations] = await Promise.all([
+    db.collection('companies').get(), db.collection('companyInvites').get()
+  ]);
+  return {
+    companies: companies.docs.map(document => ({ id: document.id, name: document.data().name || 'Homestead company',
+      ownerEmail: document.data().ownerEmail || '', listed: document.data().listed === true })),
+    pending: invitations.docs.map(document => document.data().email).filter(Boolean).sort()
+  };
+});
+
+export const addCompanyEmail = onCall(options, async request => {
+  const user = caller(request);
+  await assertMasterAdmin(user);
+  const email = normalizeAdminEmail(request.data?.email);
+  if (!email || email === masterAdminEmail) invalid('Enter another person’s valid Google email address.');
+  let account;
+  try { account = await auth.getUserByEmail(email); }
+  catch (error) {
+    if (error.code === 'auth/invalid-email') invalid('Enter a valid Google email address.');
+    if (error.code !== 'auth/user-not-found') throw error;
+  }
+  if (account?.disabled) throw new HttpsError('failed-precondition', 'This account is disabled.');
+  const ref = companyInviteRef(email);
+  return db.runTransaction(async transaction => {
+    await assertActive(transaction, user.uid);
+    const [master, invite, existingAdmin, pendingAdmin, targetBlocked] = await Promise.all([
+      transaction.get(db.doc(`admins/${user.uid}`)), transaction.get(ref),
+      account ? transaction.get(db.doc(`admins/${account.uid}`)) : Promise.resolve(null),
+      transaction.get(adminInviteRef(email)),
+      account ? transaction.get(db.doc(`blockedUsers/${account.uid}`)) : Promise.resolve(null)
+    ]);
+    if (!master.exists || !hasMasterEmail(user)) throw new HttpsError('permission-denied', 'Platform owner access required.');
+    if (existingAdmin?.exists) throw new HttpsError('already-exists', 'This account already belongs to a homestead company.');
+    if (pendingAdmin.exists) throw new HttpsError('already-exists', 'This email already has an admin invitation. Cancel it first.');
+    if (targetBlocked?.exists) throw new HttpsError('failed-precondition', 'Unblock this account before inviting it.');
+    if (invite.exists) return { state: 'pending' };
+    transaction.create(ref, { email, createdBy: user.uid, createdAt: FieldValue.serverTimestamp() });
+    return { state: 'added' };
+  });
+});
+
+export const cancelCompanyEmail = onCall(options, async request => {
+  const user = caller(request);
+  await assertMasterAdmin(user);
+  const email = normalizeAdminEmail(request.data?.email);
+  if (!email) invalid('Choose a pending company email.');
+  const ref = companyInviteRef(email);
+  await db.runTransaction(async transaction => {
+    await assertActive(transaction, user.uid);
+    const [master, invite] = await Promise.all([
+      transaction.get(db.doc(`admins/${user.uid}`)), transaction.get(ref)
+    ]);
+    if (!master.exists || !hasMasterEmail(user)) throw new HttpsError('permission-denied', 'Platform owner access required.');
+    if (!invite.exists || invite.data().email !== email) throw new HttpsError('not-found', 'This company invitation is no longer pending.');
+    transaction.delete(ref);
+  });
+  return { removed: true };
+});
+
+export const claimCompanyEmail = onCall(options, async request => {
+  const user = caller(request);
+  const candidate = normalizeAdminEmail(user.token.email);
+  if (!candidate || user.token.email_verified !== true) return { claimed: false };
+  const inviteRef = companyInviteRef(candidate);
+  if (!(await inviteRef.get()).exists) return { claimed: false };
+  const account = await auth.getUser(user.uid);
+  const email = verifiedGoogleEmail(user, account);
+  if (email !== candidate || account.disabled) throw new HttpsError('permission-denied', 'Sign in with the invited Google account.');
+  const companyRef = db.collection('companies').doc();
+  return db.runTransaction(async transaction => {
+    const [blocked, existingAdmin, invite] = await Promise.all([
+      transaction.get(db.doc(`blockedUsers/${user.uid}`)),
+      transaction.get(db.doc(`admins/${user.uid}`)), transaction.get(inviteRef)
+    ]);
+    if (blocked.exists) throw new HttpsError('permission-denied', 'This account has been blocked.');
+    if (existingAdmin.exists) throw new HttpsError('already-exists', 'This account already belongs to a homestead company.');
+    if (!invite.exists || invite.data().email !== email) return { claimed: false };
+    transaction.create(companyRef, {
+      name: 'Homestead company', ownerUid: user.uid, ownerEmail: email,
+      active: true, listed: false, createdAt: FieldValue.serverTimestamp(), createdBy: invite.data().createdBy
+    });
+    transaction.create(db.doc(`admins/${user.uid}`), {
+      companyId: companyRef.id, role: 'owner', email, createdAt: FieldValue.serverTimestamp()
+    });
+    transaction.delete(inviteRef);
+    return { claimed: true, companyId: companyRef.id };
+  });
+});
+
+export const saveCompanyProfile = onCall(options, async request => {
+  const user = caller(request);
+  const companyId = await companyOwner(user);
+  if (companyId === primaryCompanyId) invalid('Titan Business Pros uses its existing homestead page.');
+  const name = typeof request.data?.name === 'string' ? request.data.name.trim() : '';
+  if (name.length < 2 || name.length > 100) invalid('Enter a company name between 2 and 100 characters.');
+  await checkText(name);
+  await db.runTransaction(async transaction => {
+    await assertActive(transaction, user.uid);
+    const companyRef = db.doc(`companies/${companyId}`);
+    const [admin, company] = await Promise.all([
+      transaction.get(db.doc(`admins/${user.uid}`)), transaction.get(companyRef)
+    ]);
+    if (!admin.exists || company.data()?.ownerUid !== user.uid) throw new HttpsError('permission-denied', 'Company owner access required.');
+    transaction.update(companyRef, { name, listed: true, updatedAt: FieldValue.serverTimestamp() });
+    transaction.set(db.doc(`companyListings/${companyId}`), {
+      name, active: true, updatedAt: FieldValue.serverTimestamp()
+    });
+  });
+  return { saved: true };
 });
 
 export const removeAdmin = onCall(options, async request => {
   const user = caller(request);
-  await assertMasterAdmin(user);
+  const companyId = await companyOwner(user);
   const uid = request.data?.uid;
   if (typeof uid !== 'string' || !uid || uid.includes('/') || uid === user.uid) invalid('Choose another admin to remove.');
   let targetAccount;
@@ -154,11 +352,17 @@ export const removeAdmin = onCall(options, async request => {
   }
   await db.runTransaction(async transaction => {
     await assertActive(transaction, user.uid);
-    const [master, target] = await Promise.all([
+    const [owner, target] = await Promise.all([
       transaction.get(db.doc(`admins/${user.uid}`)), transaction.get(db.doc(`admins/${uid}`))
     ]);
-    if (!master.exists || !hasMasterEmail(user)) throw new HttpsError('permission-denied', 'Master admin access required.');
+    if (!owner.exists || companyIdOf(owner) !== companyId ||
+        (companyId === primaryCompanyId ? !hasMasterEmail(user) : owner.data().role !== 'owner')) {
+      throw new HttpsError('permission-denied', 'Company owner access required.');
+    }
     if (!target.exists) throw new HttpsError('not-found', 'This admin has already been removed.');
+    if (companyIdOf(target) !== companyId || target.data().role === 'owner') {
+      throw new HttpsError('permission-denied', 'You can only remove admins in your own company.');
+    }
     transaction.delete(target.ref);
     const email = normalizeAdminEmail(targetAccount?.email);
     if (email) transaction.delete(adminInviteRef(email));
@@ -275,6 +479,7 @@ async function applicantProfileCount(transaction, stats) {
 
 export const saveProfile = onCall(options, async request => {
   const user = caller(request);
+  const companyId = await requestedCompanyId(request.data?.companyId);
   const data = cleanProfile(request.data);
   const account = db.doc(`users/${user.uid}`);
   const previous = await account.get();
@@ -286,10 +491,12 @@ export const saveProfile = onCall(options, async request => {
   const now = Timestamp.now();
   const result = await db.runTransaction(async transaction => {
     await assertActive(transaction, user.uid);
-    const [admin, current, stats] = await Promise.all([
-      transaction.get(db.doc(`admins/${user.uid}`)), transaction.get(account), transaction.get(applicationStatsRef)
+    const [admin, current, stats, companyBlocked] = await Promise.all([
+      transaction.get(db.doc(`admins/${user.uid}`)), transaction.get(account), transaction.get(applicationStatsRef),
+      companyId === primaryCompanyId ? Promise.resolve(null) : transaction.get(companyDoc(companyId, `blockedApplicants/${user.uid}`))
     ]);
     if (admin.exists) throw new HttpsError('permission-denied', 'Admins do not need applicant profiles.');
+    if (companyBlocked?.exists) throw new HttpsError('permission-denied', 'This company is not accepting your application.');
     if (!current.exists) {
       const count = await applicantProfileCount(transaction, stats);
       if (count >= applicationLimit) {
@@ -311,26 +518,76 @@ export const saveProfile = onCall(options, async request => {
     const update = {
       ...data,
       email: user.token.email || '',
-      status: 'submitted',
+      ...(companyId === primaryCompanyId || !current.exists ? { status: 'submitted' } : {}),
       updatedAt: now,
       photoChangedAt: photosChanged ? now : (before?.photoChangedAt || (newPhotos.length ? now : null))
     };
-    if (current.exists) transaction.update(account, { ...update, reviewedAt: FieldValue.delete(), photoDataUrl: FieldValue.delete() });
+    if (current.exists) transaction.update(account, { ...update,
+      ...(companyId === primaryCompanyId ? { reviewedAt: FieldValue.delete() } : {}),
+      photoDataUrl: FieldValue.delete() });
     else transaction.create(account, { ...update, createdAt: now });
     transaction.set(db.doc(`applicantSummaries/${user.uid}`), {
       name: data.profile.name,
       location: data.profile.location,
       email: user.token.email || '',
-      status: 'submitted',
+      ...(companyId === primaryCompanyId || !current.exists ? { status: 'submitted' } : {}),
       updatedAt: now
     }, { merge: true });
+    transaction.set(db.doc(`applicantDirectory/${user.uid}`), directoryEntry({
+      profile: data.profile, email: user.token.email || '', updatedAt: now
+    }));
+    if (companyId !== primaryCompanyId) {
+      transaction.set(applicationRef(companyId, user.uid), {
+        profile: data.profile, status: 'submitted', submittedAt: now
+      }, { merge: true });
+      transaction.set(companySummaryRef(companyId, user.uid), {
+        name: data.profile.name, location: data.profile.location,
+        email: user.token.email || '', status: 'submitted', updatedAt: now
+      }, { merge: true });
+    }
   });
   if (result?.full) throw new HttpsError('resource-exhausted', 'Applications are full at 10,000 profiles. Please try again after a place opens.');
   return { saved: true };
 });
 
+export const getSharedApplicantProfile = onCall(options, async request => {
+  const user = caller(request);
+  await companyAdmin(user);
+  const uid = request.data?.uid;
+  if (typeof uid !== 'string' || !uid || uid.includes('/')) invalid('Choose an applicant.');
+  const [profile, blocked] = await Promise.all([
+    db.doc(`users/${uid}`).get(), db.doc(`blockedUsers/${uid}`).get()
+  ]);
+  if (!profile.exists || blocked.exists) throw new HttpsError('not-found', 'Applicant profile unavailable.');
+  const data = profile.data();
+  return { uid, profile: data.profile || {}, bio: data.bio || '',
+    photos: data.photos || (data.photoDataUrl ? [data.photoDataUrl] : []),
+    website: data.website || '', socialLinks: data.socialLinks || [], email: data.email || '' };
+});
+
+export const syncApplicantDirectory = onCall({ ...options, timeoutSeconds: 120 }, async request => {
+  await assertMasterAdmin(caller(request));
+  const stateRef = db.doc('systemTasks/applicantDirectory');
+  const state = (await stateRef.get()).data() || {};
+  if (state.done) return { done: true, processed: 0 };
+  let query = db.collection('users').orderBy(FieldPath.documentId()).limit(200);
+  if (state.lastUid) query = query.startAfter(state.lastUid);
+  const page = await query.get();
+  const blocked = await Promise.all(page.docs.map(document => db.doc(`blockedUsers/${document.id}`).get()));
+  const batch = db.batch();
+  for (const [index, document] of page.docs.entries()) {
+    if (!blocked[index].exists) batch.set(db.doc(`applicantDirectory/${document.id}`), directoryEntry(document.data()));
+  }
+  if (page.size) await batch.commit();
+  await stateRef.set({ lastUid: page.docs.at(-1)?.id || state.lastUid || '', done: page.size < 200,
+    updatedAt: FieldValue.serverTimestamp() }, { merge: true });
+  return { done: page.size < 200, processed: page.size };
+});
+
 export const sendMessage = onCall(options, async request => {
   const user = caller(request);
+  const callerAdmin = await db.doc(`admins/${user.uid}`).get();
+  const companyId = callerAdmin.exists ? companyIdOf(callerAdmin) : await requestedCompanyId(request.data?.companyId);
   const text = typeof request.data?.text === 'string' ? request.data.text.trim() : '';
   const targetUid = request.data?.targetUid;
   if (typeof text !== 'string' || !text || text.length > 2000 || typeof targetUid !== 'string' || !targetUid || targetUid.includes('/')) invalid('Enter a message and choose an applicant.');
@@ -339,12 +596,15 @@ export const sendMessage = onCall(options, async request => {
     await assertActive(transaction, user.uid);
     const admin = await transaction.get(db.doc(`admins/${user.uid}`));
     const isAdmin = admin.exists;
+    if (isAdmin && companyIdOf(admin) !== companyId) throw new HttpsError('permission-denied', 'Company access required.');
     if (!isAdmin && targetUid !== user.uid) throw new HttpsError('permission-denied', 'You can only reply in your own inbox.');
-    const [blocked, applicant] = await Promise.all([
-      transaction.get(db.doc(`blockedUsers/${targetUid}`)), transaction.get(db.doc(`users/${targetUid}`))
+    const [blocked, companyBlocked, applicant] = await Promise.all([
+      transaction.get(db.doc(`blockedUsers/${targetUid}`)),
+      companyId === primaryCompanyId ? Promise.resolve(null) : transaction.get(companyDoc(companyId, `blockedApplicants/${targetUid}`)),
+      transaction.get(db.doc(`users/${targetUid}`))
     ]);
-    if (blocked.exists || !applicant.exists) throw new HttpsError('failed-precondition', 'This applicant is unavailable.');
-    const conversation = db.doc(`conversations/${targetUid}`);
+    if (blocked.exists || companyBlocked?.exists || !applicant.exists) throw new HttpsError('failed-precondition', 'This applicant is unavailable.');
+    const conversation = companyDoc(companyId, `conversations/${targetUid}`);
     const existing = await transaction.get(conversation);
     if (!isAdmin && !existing.exists) throw new HttpsError('permission-denied', 'An admin must start the conversation.');
     const message = conversation.collection('messages').doc();
@@ -388,17 +648,20 @@ export const sanitizeMyContacts = onCall({ ...options, timeoutSeconds: 120 }, as
 
 export const setReviewStatus = onCall(options, async request => {
   const user = caller(request);
+  const { companyId } = await companyAdmin(user);
   const uid = request.data?.uid;
   const status = request.data?.status;
   if (typeof uid !== 'string' || !uid || uid.includes('/') || !reviewStatuses.has(status)) invalid('Choose an applicant and a valid status.');
   await db.runTransaction(async transaction => {
     await assertActive(transaction, user.uid);
-    if (!(await transaction.get(db.doc(`admins/${user.uid}`))).exists) throw new HttpsError('permission-denied', 'Admin access required.');
-    const applicant = db.doc(`users/${uid}`);
-    const profile = await transaction.get(applicant);
+    const admin = await transaction.get(db.doc(`admins/${user.uid}`));
+    if (!admin.exists || companyIdOf(admin) !== companyId) throw new HttpsError('permission-denied', 'Admin access required.');
+    const applicant = applicationRef(companyId, uid);
+    const profile = await transaction.get(db.doc(`users/${uid}`));
     if (!profile.exists) throw new HttpsError('not-found', 'Profile not found.');
-    transaction.update(applicant, { status, reviewedAt: FieldValue.serverTimestamp() });
-    transaction.set(db.doc(`applicantSummaries/${uid}`), {
+    transaction.set(applicant, { status, reviewedAt: FieldValue.serverTimestamp(),
+      ...(companyId === primaryCompanyId ? {} : { profile: profile.data().profile || {} }) }, { merge: true });
+    transaction.set(companySummaryRef(companyId, uid), {
       name: profile.data().profile?.name || 'Unnamed',
       location: profile.data().profile?.location || '',
       email: profile.data().email || '',
@@ -411,9 +674,48 @@ export const setReviewStatus = onCall(options, async request => {
 
 export const manageApplicant = onCall(options, async request => {
   const user = caller(request);
+  const { companyId } = await companyAdmin(user);
   const uid = request.data?.uid;
   const action = request.data?.action;
   if (typeof uid !== 'string' || !uid || uid.includes('/') || uid === user.uid || !['block', 'delete', 'unblock'].includes(action)) invalid('Choose an applicant and an action.');
+  if (companyId !== primaryCompanyId) {
+    let skillEntries = [];
+    await db.runTransaction(async transaction => {
+      await assertActive(transaction, user.uid);
+      const [admin, profile, skillRecord, application] = await Promise.all([
+        transaction.get(db.doc(`admins/${user.uid}`)), transaction.get(db.doc(`users/${uid}`)),
+        transaction.get(companyDoc(companyId, `skills/${uid}`)), transaction.get(applicationRef(companyId, uid))
+      ]);
+      if (!admin.exists || companyIdOf(admin) !== companyId || !profile.exists) {
+        throw new HttpsError('permission-denied', 'Company admin access required.');
+      }
+      skillEntries = skillRecord.data()?.entries || [];
+      if (action === 'delete' && application.data()?.interview?.scheduledAt) {
+        throw new HttpsError('failed-precondition', 'Cancel the interview before deleting this company application.');
+      }
+      const blocked = companyDoc(companyId, `blockedApplicants/${uid}`);
+      if (action === 'unblock') transaction.delete(blocked);
+      else transaction.set(blocked, { email: profile.data().email || '', blockedBy: user.uid,
+        blockedAt: FieldValue.serverTimestamp() });
+      if (action === 'delete') {
+        transaction.delete(companyDoc(companyId, `applications/${uid}`));
+        transaction.delete(companySummaryRef(companyId, uid));
+        transaction.delete(companyDoc(companyId, `questionnaires/${uid}`));
+        transaction.delete(companyDoc(companyId, `skills/${uid}`));
+        for (const entry of skillEntries) {
+          if (validSkillId(entry.id)) transaction.delete(companyDoc(companyId, `skillRankings/${entry.id}/applicants/${uid}`));
+        }
+      }
+    });
+    if (action === 'delete') {
+      await db.recursiveDelete(companyDoc(companyId, `conversations/${uid}`));
+      const teams = await companyCollection(companyId, 'teams').get();
+      const writer = db.bulkWriter();
+      for (const team of teams.docs) writer.delete(team.ref.collection('members').doc(uid));
+      await writer.close();
+    }
+    return { done: true };
+  }
   await db.runTransaction(async transaction => {
     await assertActive(transaction, user.uid);
     const [admin, targetAdmin, profile, skillRecord, stats] = await Promise.all([
@@ -430,9 +732,13 @@ export const manageApplicant = onCall(options, async request => {
     const nextCount = action === 'delete' && profile.exists ?
       Math.max(0, (await applicantProfileCount(transaction, stats)) - 1) : null;
     const blocked = db.doc(`blockedUsers/${uid}`);
-    if (action === 'unblock') transaction.delete(blocked);
+    if (action === 'unblock') {
+      transaction.delete(blocked);
+      if (profile.exists) transaction.set(db.doc(`applicantDirectory/${uid}`), directoryEntry(profile.data()));
+    }
     else {
       transaction.set(blocked, { email: profile.data()?.email || '', blockedBy: user.uid, blockedAt: FieldValue.serverTimestamp() });
+      transaction.delete(db.doc(`applicantDirectory/${uid}`));
       if (action === 'delete') {
         if (nextCount !== null) transaction.set(applicationStatsRef, { profileCount: nextCount, updatedAt: FieldValue.serverTimestamp() });
         if (profile.exists) transaction.delete(profile.ref);
@@ -467,6 +773,7 @@ export const manageApplicant = onCall(options, async request => {
 
 export const manageTeam = onCall(options, async request => {
   const user = caller(request);
+  const { companyId } = await companyAdmin(user);
   const action = request.data?.action;
   const teamId = request.data?.teamId;
   if (!['create', 'rename', 'delete'].includes(action) ||
@@ -475,12 +782,12 @@ export const manageTeam = onCall(options, async request => {
   }
   const name = typeof request.data?.name === 'string' ? request.data.name.trim() : '';
   if (action !== 'delete' && (!name || name.length > 80)) invalid('Enter a team name up to 80 characters.');
-  await assertAdmin(user.uid);
   if (action !== 'delete') await checkText(name);
-  const teamRef = action === 'create' ? db.collection('teams').doc() : db.doc(`teams/${teamId}`);
+  const teamRef = action === 'create' ? companyCollection(companyId, 'teams').doc() : companyDoc(companyId, `teams/${teamId}`);
   await db.runTransaction(async transaction => {
     await assertActive(transaction, user.uid);
-    if (!(await transaction.get(db.doc(`admins/${user.uid}`))).exists) {
+    const admin = await transaction.get(db.doc(`admins/${user.uid}`));
+    if (!admin.exists || companyIdOf(admin) !== companyId) {
       throw new HttpsError('permission-denied', 'Admin access required.');
     }
     if (action === 'create') {
@@ -497,6 +804,7 @@ export const manageTeam = onCall(options, async request => {
 
 export const setTeamMember = onCall(options, async request => {
   const user = caller(request);
+  const { companyId } = await companyAdmin(user);
   const teamId = request.data?.teamId;
   const uid = request.data?.uid;
   const action = request.data?.action;
@@ -506,20 +814,22 @@ export const setTeamMember = onCall(options, async request => {
   }
   await db.runTransaction(async transaction => {
     await assertActive(transaction, user.uid);
-    if (!(await transaction.get(db.doc(`admins/${user.uid}`))).exists) {
+    const admin = await transaction.get(db.doc(`admins/${user.uid}`));
+    if (!admin.exists || companyIdOf(admin) !== companyId) {
       throw new HttpsError('permission-denied', 'Admin access required.');
     }
-    const teamRef = db.doc(`teams/${teamId}`);
+    const teamRef = companyDoc(companyId, `teams/${teamId}`);
     if (!(await transaction.get(teamRef)).exists) throw new HttpsError('not-found', 'Team not found.');
     const memberRef = teamRef.collection('members').doc(uid);
     if (action === 'remove') {
       transaction.delete(memberRef);
       return;
     }
-    const [profile, blocked] = await Promise.all([
-      transaction.get(db.doc(`users/${uid}`)), transaction.get(db.doc(`blockedUsers/${uid}`))
+    const [profile, blocked, companyBlocked] = await Promise.all([
+      transaction.get(db.doc(`users/${uid}`)), transaction.get(db.doc(`blockedUsers/${uid}`)),
+      companyId === primaryCompanyId ? Promise.resolve(null) : transaction.get(companyDoc(companyId, `blockedApplicants/${uid}`))
     ]);
-    if (!profile.exists || blocked.exists) throw new HttpsError('failed-precondition', 'Choose an active applicant.');
+    if (!profile.exists || blocked.exists || companyBlocked?.exists) throw new HttpsError('failed-precondition', 'Choose an active applicant.');
     transaction.set(memberRef, { addedAt: FieldValue.serverTimestamp(), addedBy: user.uid });
   });
   return { saved: true };
@@ -527,6 +837,8 @@ export const setTeamMember = onCall(options, async request => {
 
 export const saveQuestionnaireConfig = onCall({ ...options, timeoutSeconds: 120 }, async request => {
   const user = caller(request);
+  const companyId = await companyOwner(user);
+  const configRef = companyDoc(companyId, 'questionnaireConfig/main');
   const enabled = request.data?.enabled;
   const expectedRevision = request.data?.expectedRevision;
   const rawQuestions = request.data?.questions;
@@ -551,15 +863,17 @@ export const saveQuestionnaireConfig = onCall({ ...options, timeoutSeconds: 120 
     return { section, prompt, choices };
   });
   if (textLength > 30000) invalid('Shorten the questionnaire before saving.');
-  await assertMasterAdmin(user);
   const text = questions.map(question => [question.section, question.prompt, ...question.choices].join('\n')).join('\n');
   for (let index = 0; index < text.length; index += 5000) await checkText(text.slice(index, index + 5000));
   const revision = await db.runTransaction(async transaction => {
     await assertActive(transaction, user.uid);
     const [admin, current] = await Promise.all([
-      transaction.get(db.doc(`admins/${user.uid}`)), transaction.get(questionnaireConfigRef)
+      transaction.get(db.doc(`admins/${user.uid}`)), transaction.get(configRef)
     ]);
-    if (!admin.exists || !hasMasterEmail(user)) throw new HttpsError('permission-denied', 'Master admin access required.');
+    if (!admin.exists || companyIdOf(admin) !== companyId ||
+        (companyId === primaryCompanyId ? !hasMasterEmail(user) : admin.data().role !== 'owner')) {
+      throw new HttpsError('permission-denied', 'Company owner access required.');
+    }
     const currentRevision = current.data()?.revision || 0;
     if (currentRevision !== expectedRevision) {
       throw new HttpsError('aborted', 'The questionnaire changed in another session. Reload before saving.');
@@ -569,7 +883,7 @@ export const saveQuestionnaireConfig = onCall({ ...options, timeoutSeconds: 120 
       [question.section, question.prompt, question.choices]));
     const questionsChanged = questionValues(current.data()?.questions) !== questionValues(questions);
     const questionRevision = (current.data()?.questionRevision || 0) + (questionsChanged ? 1 : 0);
-    transaction.set(questionnaireConfigRef, {
+    transaction.set(configRef, {
       enabled, revision: nextRevision, questionRevision, questions,
       updatedBy: user.uid, updatedAt: FieldValue.serverTimestamp()
     });
@@ -580,6 +894,7 @@ export const saveQuestionnaireConfig = onCall({ ...options, timeoutSeconds: 120 
 
 export const saveQuestionnaire = onCall(options, async request => {
   const user = caller(request);
+  const companyId = await requestedCompanyId(request.data?.companyId);
   const answers = request.data?.answers;
   if (!Array.isArray(answers) || answers.length > 100) invalid('Answer every question before submitting.');
   const normalizedAnswers = answers.map(answer => {
@@ -599,12 +914,14 @@ export const saveQuestionnaire = onCall(options, async request => {
   }
   await db.runTransaction(async transaction => {
     await assertActive(transaction, user.uid);
-    const [admin, profile, configuration] = await Promise.all([
+    const [admin, profile, configuration, companyBlocked] = await Promise.all([
       transaction.get(db.doc(`admins/${user.uid}`)),
       transaction.get(db.doc(`users/${user.uid}`)),
-      transaction.get(questionnaireConfigRef)
+      transaction.get(companyDoc(companyId, 'questionnaireConfig/main')),
+      companyId === primaryCompanyId ? Promise.resolve(null) : transaction.get(companyDoc(companyId, `blockedApplicants/${user.uid}`))
     ]);
     if (admin.exists || !profile.exists) throw new HttpsError('failed-precondition', 'Save your applicant profile before taking the questionnaire.');
+    if (companyBlocked?.exists) throw new HttpsError('permission-denied', 'This company is not accepting your application.');
     const config = configuration.data();
     if (config?.enabled === false) throw new HttpsError('failed-precondition', 'The questionnaire is currently turned off.');
     if ((config?.questionRevision || 0) !== (request.data?.revision ?? 0)) {
@@ -616,17 +933,17 @@ export const saveQuestionnaire = onCall(options, async request => {
       Number.isInteger(answer) && (answer < 0 || answer >= choiceCounts[index]))) {
       invalid('Choose an answer or write your own response for every current question. Refresh if the questionnaire changed.');
     }
-    transaction.set(db.doc(`questionnaires/${user.uid}`), {
+    transaction.set(companyDoc(companyId, `questionnaires/${user.uid}`), {
       version: questions ? 2 : 1,
       answers: normalizedAnswers,
       ...(questions ? { revision: config.questionRevision, questions } : {}),
       submittedAt: FieldValue.serverTimestamp()
     });
-    transaction.set(db.doc(`applicantSummaries/${user.uid}`), {
+    transaction.set(companySummaryRef(companyId, user.uid), {
       name: profile.data().profile?.name || 'Unnamed',
       location: profile.data().profile?.location || '',
       email: profile.data().email || '',
-      status: profile.data().status || 'submitted',
+      ...(companyId === primaryCompanyId ? { status: profile.data().status || 'submitted' } : {}),
       questionnaireCompletedAt: FieldValue.serverTimestamp()
     }, { merge: true });
   });
@@ -635,11 +952,11 @@ export const saveQuestionnaire = onCall(options, async request => {
 
 export const manageInterview = onCall(options, async request => {
   const user = caller(request);
+  const { companyId } = await companyAdmin(user);
   const uid = request.data?.uid;
   const action = request.data?.action;
   if (typeof uid !== 'string' || !uid || uid.includes('/') || uid === user.uid ||
       !['schedule', 'cancel'].includes(action)) invalid('Choose an applicant and an interview action.');
-  await assertAdmin(user.uid);
   let interview = null;
   let invitation = '';
   let reservationRefs = [];
@@ -685,21 +1002,23 @@ export const manageInterview = onCall(options, async request => {
   await db.runTransaction(async transaction => {
     await assertActive(transaction, user.uid);
     const revisionRef = calendarRevisionRef(db, user.uid);
-    const [admin, blocked, applicant] = await Promise.all([
+    const [admin, blocked, companyBlocked, sharedProfile, applicant] = await Promise.all([
       transaction.get(db.doc(`admins/${user.uid}`)),
       transaction.get(db.doc(`blockedUsers/${uid}`)),
+      companyId === primaryCompanyId ? Promise.resolve(null) : transaction.get(companyDoc(companyId, `blockedApplicants/${uid}`)),
       transaction.get(db.doc(`users/${uid}`)),
+      transaction.get(applicationRef(companyId, uid)),
       transaction.get(revisionRef)
     ]);
-    if (!admin.exists) throw new HttpsError('permission-denied', 'Admin access required.');
-    if (blocked.exists || !applicant.exists) throw new HttpsError('failed-precondition', 'This applicant is unavailable.');
-    if (applicant.data().interview?.source === 'calendar') {
+    if (!admin.exists || companyIdOf(admin) !== companyId) throw new HttpsError('permission-denied', 'Admin access required.');
+    if (blocked.exists || companyBlocked?.exists || !sharedProfile.exists) throw new HttpsError('failed-precondition', 'This applicant is unavailable.');
+    if (applicant.data()?.interview?.source === 'calendar') {
       throw new HttpsError('failed-precondition', 'Cancel the booked interview before changing it.');
     }
-    if (action === 'cancel' && !applicant.data().interview) throw new HttpsError('failed-precondition', 'No interview is scheduled.');
-    const conversation = db.doc(`conversations/${uid}`);
+    if (action === 'cancel' && !applicant.data()?.interview) throw new HttpsError('failed-precondition', 'No interview is scheduled.');
+    const conversation = companyDoc(companyId, `conversations/${uid}`);
     const existing = await transaction.get(conversation);
-    const previousRefs = (applicant.data().interview?.bookingLockIds || [])
+    const previousRefs = (applicant.data()?.interview?.bookingLockIds || [])
       .map(id => db.doc(`calendarSlotLocks/${id}`));
     const allRefs = [...new Map([...previousRefs, ...reservationRefs].map(ref => [ref.path, ref])).values()];
     const locks = await Promise.all(allRefs.map(ref => transaction.get(ref)));
@@ -709,7 +1028,8 @@ export const manageInterview = onCall(options, async request => {
         interview.scheduledAt.toMillis(), reservationEndMs + reservationBufferMs,
         block.data().start?.toMillis?.(), block.data().end?.toMillis?.()
       ))) throw new HttpsError('failed-precondition', 'A blocked time overlaps that interview.');
-      const otherInterviews = await transaction.get(db.collection('users')
+      const otherInterviews = await transaction.get(companyCollection(companyId,
+        companyId === primaryCompanyId ? 'users' : 'applications')
         .where('interview.contactAdminUid', '==', user.uid).select('interview'));
       const startMs = interview.scheduledAt.toMillis();
       if (otherInterviews.docs.some(doc => {
@@ -735,12 +1055,13 @@ export const manageInterview = onCall(options, async request => {
       const label = ({ phone: 'phone', 'in-person': 'in-person', zoom: 'Zoom' })[previous.mode] || 'scheduled';
       invitation = `The ${label} interview has been canceled. Reply here if you have questions about the date or time.`;
       transaction.update(applicant.ref, { interview: FieldValue.delete() });
-      transaction.set(db.doc(`applicantSummaries/${uid}`), {
+      transaction.set(companySummaryRef(companyId, uid), {
         interviewMode: FieldValue.delete(), interviewAt: FieldValue.delete()
       }, { merge: true });
     } else {
-      transaction.update(applicant.ref, { interview, bookingInvite: FieldValue.delete() });
-      transaction.set(db.doc(`applicantSummaries/${uid}`), {
+      transaction.set(applicationRef(companyId, uid), { interview, bookingInvite: FieldValue.delete(),
+        ...(companyId === primaryCompanyId ? {} : { profile: sharedProfile.data().profile || {} }) }, { merge: true });
+      transaction.set(companySummaryRef(companyId, uid), {
         interviewMode: interview.mode, interviewAt: interview.scheduledAt
       }, { merge: true });
       reservationRefs.forEach(ref => transaction.set(ref, {
@@ -761,21 +1082,23 @@ export const manageInterview = onCall(options, async request => {
 
 export const addSkill = onCall(options, async request => {
   const user = caller(request);
+  const companyId = await companyOwner(user);
   const name = typeof request.data?.name === 'string' ? request.data.name.trim().replace(/\s+/g, ' ') : '';
   const category = typeof request.data?.category === 'string' ? request.data.category.trim().replace(/\s+/g, ' ') : '';
   if (name.length < 2 || name.length > 80 || category.length < 2 || category.length > 50 ||
       /[\/\\]/.test(name + category)) invalid('Enter a skill and a category.');
-  await assertMasterAdmin(user);
   await checkText(`${category}\n${name}`);
   const key = `${category.toLocaleLowerCase('en-US')}|${name.toLocaleLowerCase('en-US')}`;
   const id = `custom_${createHash('sha256').update(key).digest('hex').slice(0, 32)}`;
   try {
     await db.runTransaction(async transaction => {
       await assertActive(transaction, user.uid);
-      if (!(await transaction.get(db.doc(`admins/${user.uid}`))).exists || !hasMasterEmail(user)) {
-        throw new HttpsError('permission-denied', 'Master admin access required.');
+      const admin = await transaction.get(db.doc(`admins/${user.uid}`));
+      if (!admin.exists || companyIdOf(admin) !== companyId ||
+          (companyId === primaryCompanyId ? !hasMasterEmail(user) : admin.data().role !== 'owner')) {
+        throw new HttpsError('permission-denied', 'Company owner access required.');
       }
-      const skill = db.doc(`skillCatalog/${id}`);
+      const skill = companyDoc(companyId, `skillCatalog/${id}`);
       if ((await transaction.get(skill)).exists) throw new HttpsError('already-exists', 'This skill is already in that category.');
       transaction.create(skill, { name, category, addedBy: user.uid, addedAt: FieldValue.serverTimestamp() });
     });
@@ -790,15 +1113,16 @@ export const addSkill = onCall(options, async request => {
 
 export const deleteSkill = onCall(options, async request => {
   const user = caller(request);
+  const { companyId } = await companyAdmin(user);
   const id = request.data?.id;
   if (!validSkillId(id)) invalid('Choose a skill to delete.');
   await db.runTransaction(async transaction => {
     await assertActive(transaction, user.uid);
-    const skillRef = db.doc(`skillCatalog/${id}`);
+    const skillRef = companyDoc(companyId, `skillCatalog/${id}`);
     const [admin, skill] = await Promise.all([
       transaction.get(db.doc(`admins/${user.uid}`)), transaction.get(skillRef)
     ]);
-    if (!admin.exists) throw new HttpsError('permission-denied', 'Admin access required.');
+    if (!admin.exists || companyIdOf(admin) !== companyId) throw new HttpsError('permission-denied', 'Admin access required.');
     if ((typeof id === 'string' && !skill.exists) || skill.data()?.deleted === true) {
       throw new HttpsError('not-found', 'This skill is no longer available.');
     }
@@ -811,6 +1135,7 @@ export const deleteSkill = onCall(options, async request => {
 
 export const saveSkills = onCall({ ...options, timeoutSeconds: 120 }, async request => {
   const user = caller(request);
+  const companyId = await requestedCompanyId(request.data?.companyId);
   const raw = request.data?.entries;
   if (!Array.isArray(raw) || raw.length > 10) invalid('Choose no more than 10 skills.');
   const seen = new Set();
@@ -833,14 +1158,16 @@ export const saveSkills = onCall({ ...options, timeoutSeconds: 120 }, async requ
   }
   await db.runTransaction(async transaction => {
     await assertActive(transaction, user.uid);
-    const skillDoc = db.doc(`skills/${user.uid}`);
-    const [admin, profile, previous, ...catalogSkills] = await Promise.all([
+    const skillDoc = companyDoc(companyId, `skills/${user.uid}`);
+    const [admin, profile, previous, companyBlocked, ...catalogSkills] = await Promise.all([
       transaction.get(db.doc(`admins/${user.uid}`)),
       transaction.get(db.doc(`users/${user.uid}`)),
       transaction.get(skillDoc),
-      ...entries.map(entry => transaction.get(db.doc(`skillCatalog/${entry.id}`)))
+      companyId === primaryCompanyId ? Promise.resolve(null) : transaction.get(companyDoc(companyId, `blockedApplicants/${user.uid}`)),
+      ...entries.map(entry => transaction.get(companyDoc(companyId, `skillCatalog/${entry.id}`)))
     ]);
     if (admin.exists || !profile.exists) throw new HttpsError('failed-precondition', 'Save your applicant profile before adding skills.');
+    if (companyBlocked?.exists) throw new HttpsError('permission-denied', 'This company is not accepting your application.');
     if (catalogSkills.some((snapshot, index) => snapshot.data()?.deleted === true ||
       (typeof entries[index].id === 'string' && !snapshot.exists))) {
       invalid('A selected skill is no longer available. Refresh and try again.');
@@ -848,22 +1175,22 @@ export const saveSkills = onCall({ ...options, timeoutSeconds: 120 }, async requ
     const currentIds = new Set(entries.map(entry => String(entry.id)));
     for (const old of previous.data()?.entries || []) {
       if (validSkillId(old.id) && !currentIds.has(String(old.id))) {
-        transaction.delete(db.doc(`skillRankings/${old.id}/applicants/${user.uid}`));
+        transaction.delete(companyDoc(companyId, `skillRankings/${old.id}/applicants/${user.uid}`));
       }
     }
     for (const entry of entries) {
-      transaction.set(db.doc(`skillRankings/${entry.id}/applicants/${user.uid}`), {
+      transaction.set(companyDoc(companyId, `skillRankings/${entry.id}/applicants/${user.uid}`), {
         years: entry.years,
         organization: entry.organization,
         updatedAt: FieldValue.serverTimestamp()
       });
     }
     transaction.set(skillDoc, { version: 1, entries, updatedAt: FieldValue.serverTimestamp() });
-    transaction.set(db.doc(`applicantSummaries/${user.uid}`), {
+    transaction.set(companySummaryRef(companyId, user.uid), {
       name: profile.data().profile?.name || 'Unnamed',
       location: profile.data().profile?.location || '',
       email: profile.data().email || '',
-      status: profile.data().status || 'submitted',
+      ...(companyId === primaryCompanyId ? { status: profile.data().status || 'submitted' } : {}),
       skillCount: entries.length
     }, { merge: true });
   });
@@ -896,18 +1223,25 @@ async function assertAdmin(uid) {
     db.doc(`blockedUsers/${uid}`).get(), db.doc(`admins/${uid}`).get()
   ]);
   if (blocked.exists || !admin.exists) throw new HttpsError('permission-denied', 'Admin access required.');
+  const companyId = companyIdOf(admin);
+  if (companyId !== primaryCompanyId) await requestedCompanyId(companyId);
+  return companyId;
 }
 
 export const saveHomesteadPage = onCall({ ...options, timeoutSeconds: 120 }, async request => {
   const user = caller(request);
-  await assertMasterAdmin(user);
+  const companyId = await companyOwner(user);
   const page = cleanHomesteadPage(request.data);
   const text = [page.name, page.description, ...page.fields.flatMap(field => [field.label, field.value])].join('\n');
   for (let index = 0; index < text.length; index += 5000) await checkText(text.slice(index, index + 5000));
   await db.runTransaction(async transaction => {
     await assertActive(transaction, user.uid);
-    if (!(await transaction.get(db.doc(`admins/${user.uid}`))).exists || !hasMasterEmail(user)) throw new HttpsError('permission-denied', 'Master admin access required.');
-    transaction.set(db.doc('homesteadPage/main'), {
+    const admin = await transaction.get(db.doc(`admins/${user.uid}`));
+    if (!admin.exists || companyIdOf(admin) !== companyId ||
+        (companyId === primaryCompanyId ? !hasMasterEmail(user) : admin.data().role !== 'owner')) {
+      throw new HttpsError('permission-denied', 'Company owner access required.');
+    }
+    transaction.set(companyDoc(companyId, 'homesteadPage/main'), {
       ...page, published: true, updatedBy: user.uid, updatedAt: FieldValue.serverTimestamp()
     }, { merge: true });
   });
@@ -916,20 +1250,23 @@ export const saveHomesteadPage = onCall({ ...options, timeoutSeconds: 120 }, asy
 
 export const addHomesteadPhoto = onCall({ ...options, timeoutSeconds: 120 }, async request => {
   const user = caller(request);
-  await assertMasterAdmin(user);
+  const companyId = await companyOwner(user);
   const photo = request.data?.photo;
   if (typeof photo !== 'string' || photo.length > 200000 || !photoPattern.test(photo)) {
     invalid('Choose a JPG photo under 200 KB.');
   }
   await checkPhotos([photo]);
-  const pageRef = db.doc('homesteadPage/main');
-  const photoRef = db.collection('homesteadPhotos').doc();
+  const pageRef = companyDoc(companyId, 'homesteadPage/main');
+  const photoRef = companyCollection(companyId, 'homesteadPhotos').doc();
   await db.runTransaction(async transaction => {
     await assertActive(transaction, user.uid);
     const [admin, page] = await Promise.all([
       transaction.get(db.doc(`admins/${user.uid}`)), transaction.get(pageRef)
     ]);
-    if (!admin.exists || !hasMasterEmail(user)) throw new HttpsError('permission-denied', 'Master admin access required.');
+    if (!admin.exists || companyIdOf(admin) !== companyId ||
+        (companyId === primaryCompanyId ? !hasMasterEmail(user) : admin.data().role !== 'owner')) {
+      throw new HttpsError('permission-denied', 'Company owner access required.');
+    }
     const count = page.data()?.photoCount || 0;
     if (count >= 20) throw new HttpsError('failed-precondition', 'The homestead page already has 20 photos.');
     transaction.create(photoRef, { photo, addedBy: user.uid, addedAt: FieldValue.serverTimestamp() });
@@ -940,17 +1277,20 @@ export const addHomesteadPhoto = onCall({ ...options, timeoutSeconds: 120 }, asy
 
 export const deleteHomesteadPhoto = onCall(options, async request => {
   const user = caller(request);
-  await assertMasterAdmin(user);
+  const companyId = await companyOwner(user);
   const id = request.data?.id;
   if (typeof id !== 'string' || !/^[A-Za-z0-9]{20}$/.test(id)) invalid('Choose a homestead photo to remove.');
-  const pageRef = db.doc('homesteadPage/main');
-  const photoRef = db.doc(`homesteadPhotos/${id}`);
+  const pageRef = companyDoc(companyId, 'homesteadPage/main');
+  const photoRef = companyDoc(companyId, `homesteadPhotos/${id}`);
   await db.runTransaction(async transaction => {
     await assertActive(transaction, user.uid);
     const [admin, page, photo] = await Promise.all([
       transaction.get(db.doc(`admins/${user.uid}`)), transaction.get(pageRef), transaction.get(photoRef)
     ]);
-    if (!admin.exists || !hasMasterEmail(user)) throw new HttpsError('permission-denied', 'Master admin access required.');
+    if (!admin.exists || companyIdOf(admin) !== companyId ||
+        (companyId === primaryCompanyId ? !hasMasterEmail(user) : admin.data().role !== 'owner')) {
+      throw new HttpsError('permission-denied', 'Company owner access required.');
+    }
     if (!photo.exists) throw new HttpsError('not-found', 'Photo not found.');
     transaction.delete(photoRef);
     transaction.set(pageRef, { photoCount: Math.max(0, (page.data()?.photoCount || 1) - 1) }, { merge: true });
@@ -962,4 +1302,6 @@ export const {
   calendarStatus, saveCalendarAvailability, addCalendarBlock, removeCalendarBlock,
   inviteToBook, revokeBookingInvite,
   listInterviewSlots, bookInterviewSlot, cancelCalendarInterview
-} = createCalendarBooking({ db, caller, assertAdmin, checkText, options });
+} = createCalendarBooking({ db, caller, assertAdmin, checkText, options,
+  companyIdForAdminUid: assertAdmin, requestedCompanyId, companyDoc, companyCollection,
+  applicationRef, companySummaryRef, primaryCompanyId });

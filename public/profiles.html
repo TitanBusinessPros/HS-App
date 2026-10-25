@@ -23,7 +23,7 @@
     <section id="loading" class="state-card"><h1>Opening private profiles...</h1></section>
     <section id="access-message" class="state-card" hidden><h1>Private profiles</h1><p id="access-text">Sign in with an admin Google account to review profiles.</p><button id="retry-profiles" class="primary-button" type="button" hidden>Try again</button> <a class="primary-button button-link" href="./">Go to Homesteader</a></section>
     <section id="profiles-view" hidden>
-      <div class="page-intro"><span class="eyebrow">Admin workspace</span><h1>Applicant profiles</h1><p>Select an applicant to review their profile, add them to a homestead team, and see their skills, questionnaire, and private conversation.</p><a class="text-button" href="./">Back to admin home</a></div>
+      <div class="page-intro"><span class="eyebrow">Admin workspace</span><h1>Applicant profiles</h1><p id="profiles-company-name" class="muted"></p><p>Select an applicant to review their profile, add them to a homestead team, and see their skills, questionnaire, and private conversation.</p><a class="text-button" href="./">Back to admin home</a></div>
       <p id="page-message" class="message" role="status"></p>
       <section id="calendar-settings" class="card skill-ranking-card">
         <h2>My interview calendar</h2>
@@ -77,7 +77,7 @@
       </section>
       <section id="admin-management" class="card skill-ranking-card" hidden>
         <h2>Manage admins</h2>
-        <p class="muted">Add someone using the Google email they will use to sign in. Their admin access starts automatically on their next sign-in. Only the master admin can add or remove admins.</p>
+        <p class="muted">Add someone using the Google email they will use to sign in. Their access starts automatically on their next sign-in. The company owner can add or remove admins for this company.</p>
         <form id="add-admin-form">
           <label for="new-admin-email">New admin's Google email</label>
           <div class="admin-email-controls"><input id="new-admin-email" type="email" autocomplete="email" required maxlength="254" placeholder="name@example.com"><button class="primary-button" type="submit">Add admin</button></div>

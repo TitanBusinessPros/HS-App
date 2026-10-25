@@ -7,12 +7,9 @@ import { firebaseConfig, appCheckSiteKey } from './firebase-config.js';
 import { normalizeExternalUrl } from './links.js';
 import { questions } from './questions.js';
 import { buildSkillCatalog } from './skills.js';
+import { requestedCompany, companySegments, companyLink } from './company-context.js';
 
 const $ = id => document.getElementById(id);
-$('open-private-profiles').addEventListener('click', event => {
-  event.preventDefault();
-  location.href = `profiles.html?open=${Date.now()}`;
-});
 const configured = firebaseConfig.apiKey && firebaseConfig.apiKey !== 'REPLACE_ME' && firebaseConfig.projectId !== 'REPLACE_ME' && firebaseConfig.appId !== 'REPLACE_ME' && appCheckSiteKey && appCheckSiteKey !== 'REPLACE_ME';
 if (!configured) {
   $('setup').hidden = false;
@@ -35,6 +32,23 @@ function start() {
   const bookInterviewSlotCall = httpsCallable(functions, 'bookInterviewSlot');
   const claimAdminEmailCall = httpsCallable(functions, 'claimAdminEmail');
   const addAdminEmailCall = httpsCallable(functions, 'addAdminEmail');
+  const claimCompanyEmailCall = httpsCallable(functions, 'claimCompanyEmail');
+  const addCompanyEmailCall = httpsCallable(functions, 'addCompanyEmail');
+  const cancelCompanyEmailCall = httpsCallable(functions, 'cancelCompanyEmail');
+  const listCompaniesCall = httpsCallable(functions, 'listCompanies');
+  const syncApplicantDirectoryCall = httpsCallable(functions, 'syncApplicantDirectory');
+  const saveCompanyProfileCall = httpsCallable(functions, 'saveCompanyProfile');
+  let companyId = requestedCompany();
+  let directorySyncRunning = false;
+  const scopedDoc = (...parts) => doc(db, ...companySegments(companyId, ...parts));
+  const scopedCollection = (...parts) => collection(db, ...companySegments(companyId, ...parts));
+  $('open-private-profiles').addEventListener('click', event => {
+    event.preventDefault();
+    location.href = `${companyLink('profiles.html', companyId)}${companyId === 'titan' ? '?' : '&'}open=${Date.now()}`;
+  });
+  $('company-select').addEventListener('change', () => {
+    location.href = companyLink('./', $('company-select').value);
+  });
   let currentUser = null;
   let currentProfile = null;
   let isAdmin = false;
@@ -42,6 +56,8 @@ function start() {
   let profileInitialized = false;
   let memberConversationUnsub = null;
   let profileUnsub = null;
+  let applicationUnsub = null;
+  let companyListingsUnsub = null;
   let questionnaireUnsub = null;
   let questionnaireConfigUnsub = null;
   let questionnaireSaved = null;
@@ -110,9 +126,9 @@ function start() {
     document.body.classList.remove('app-loading');
   }
   function cleanSubscriptions() {
-    for (const unsub of [memberConversationUnsub, profileUnsub, questionnaireUnsub, questionnaireConfigUnsub, skillsUnsub, skillCatalogUnsub, rosterTeamsUnsub, rosterSummariesUnsub]) if (unsub) unsub();
+    for (const unsub of [memberConversationUnsub, profileUnsub, applicationUnsub, companyListingsUnsub, questionnaireUnsub, questionnaireConfigUnsub, skillsUnsub, skillCatalogUnsub, rosterTeamsUnsub, rosterSummariesUnsub]) if (unsub) unsub();
     for (const unsub of rosterMemberUnsubs.values()) unsub();
-    memberConversationUnsub = profileUnsub = questionnaireUnsub = questionnaireConfigUnsub = skillsUnsub = skillCatalogUnsub = rosterTeamsUnsub = rosterSummariesUnsub = null;
+    memberConversationUnsub = profileUnsub = applicationUnsub = companyListingsUnsub = questionnaireUnsub = questionnaireConfigUnsub = skillsUnsub = skillCatalogUnsub = rosterTeamsUnsub = rosterSummariesUnsub = null;
     memberSkillEntries = [];
     memberSkillCatalog = buildSkillCatalog();
     rosterMemberUnsubs = new Map();
@@ -177,7 +193,7 @@ function start() {
     }
   }
   function watchAdminRoster(generation) {
-    rosterSummariesUnsub = onSnapshot(collection(db, 'applicantSummaries'), snapshot => {
+    rosterSummariesUnsub = onSnapshot(companyId === 'titan' ? scopedCollection('applicantSummaries') : collection(db, 'applicantDirectory'), snapshot => {
       if (generation !== authGeneration) return;
       rosterSummaries = new Map(snapshot.docs.map(item => [item.id, item.data()]));
       rosterSummariesReady = true;
@@ -188,7 +204,7 @@ function start() {
       rosterSummariesReady = true;
       renderAdminRoster();
     });
-    rosterTeamsUnsub = onSnapshot(collection(db, 'teams'), snapshot => {
+    rosterTeamsUnsub = onSnapshot(scopedCollection('teams'), snapshot => {
       if (generation !== authGeneration) return;
       rosterTeams = snapshot.docs.map(item => ({ id: item.id, ...item.data() }))
         .sort((a, b) => rosterCollator.compare(a.name || '', b.name || ''));
@@ -203,7 +219,7 @@ function start() {
       }
       for (const team of rosterTeams) {
         if (rosterMemberUnsubs.has(team.id)) continue;
-        const unsub = onSnapshot(collection(db, 'teams', team.id, 'members'), members => {
+        const unsub = onSnapshot(scopedCollection('teams', team.id, 'members'), members => {
           if (generation !== authGeneration) return;
           rosterMembers.set(team.id, members.docs.map(item => item.id));
           rosterMemberErrors.delete(team.id);
@@ -268,6 +284,79 @@ function start() {
     } catch (error) { status('home-admin-message', readableError(error), true); }
     finally { button.disabled = false; }
   });
+  $('company-profile-form').addEventListener('submit', async event => {
+    event.preventDefault();
+    const button = event.submitter;
+    button.disabled = true;
+    try {
+      await saveCompanyProfileCall({ name: $('company-profile-name').value.trim() });
+      $('admin-company-name').textContent = $('company-profile-name').value.trim();
+      status('company-profile-message', 'Company name saved. Applicants can now choose your homestead.');
+    } catch (error) { status('company-profile-message', readableError(error), true); }
+    finally { button.disabled = false; }
+  });
+  $('company-invite-form').addEventListener('submit', async event => {
+    event.preventDefault();
+    const button = event.submitter;
+    button.disabled = true;
+    try {
+      const result = await addCompanyEmailCall({ email: $('company-invite-email').value.trim() });
+      status('company-invite-message', result.data.state === 'added' ?
+        'Invitation saved. The owner can sign in with that Google email to create their company.' :
+        'This email already has a pending company invitation.');
+      $('company-invite-email').value = '';
+      await loadCompanies();
+    } catch (error) { status('company-invite-message', readableError(error), true); }
+    finally { button.disabled = false; }
+  });
+  async function loadCompanies() {
+    try {
+      const { data } = await listCompaniesCall();
+      $('company-list').replaceChildren();
+      for (const company of data.companies || []) {
+        const row = document.createElement('div');
+        row.className = 'admin-row';
+        row.textContent = `${company.name} · ${company.ownerEmail} · ${company.listed ? 'Available to applicants' : 'Awaiting company name'}`;
+        $('company-list').append(row);
+      }
+      $('company-pending-list').replaceChildren();
+      for (const email of data.pending || []) {
+        const row = document.createElement('div');
+        row.className = 'admin-row';
+        const label = document.createElement('span');
+        label.textContent = email;
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'danger-button';
+        button.textContent = 'Cancel invitation';
+        button.addEventListener('click', async () => {
+          button.disabled = true;
+          try { await cancelCompanyEmailCall({ email }); await loadCompanies(); }
+          catch (error) { status('company-invite-message', readableError(error), true); button.disabled = false; }
+        });
+        row.append(label, button);
+        $('company-pending-list').append(row);
+      }
+      syncDirectory();
+    } catch (error) { status('company-invite-message', readableError(error), true); }
+  }
+  async function syncDirectory() {
+    if (directorySyncRunning) return;
+    directorySyncRunning = true;
+    let count = 0;
+    try {
+      for (;;) {
+        const { data } = await syncApplicantDirectoryCall();
+        count += data.processed || 0;
+        $('company-sync-status').textContent = data.done ?
+          'Shared applicant search is up to date.' :
+          `Preparing existing applicant profiles for all companies: ${count} checked...`;
+        if (data.done) break;
+      }
+    } catch (error) {
+      $('company-sync-status').textContent = `Applicant directory sync paused: ${readableError(error)}. Reload this page to resume.`;
+    } finally { directorySyncRunning = false; }
+  }
 
   onAuthStateChanged(auth, async user => {
     const generation = ++authGeneration;
@@ -295,35 +384,66 @@ function start() {
         status('auth-message', 'This account has been blocked.', true);
         return;
       }
-      isAdmin = (await getDoc(doc(db, 'admins', user.uid))).exists();
-      if (!isAdmin) isAdmin = (await claimAdminEmailCall()).data.admin === true;
+      let adminRecord = await getDoc(doc(db, 'admins', user.uid));
+      if (!adminRecord.exists()) {
+        const companyClaim = await claimCompanyEmailCall();
+        if (!companyClaim.data.claimed) await claimAdminEmailCall();
+        adminRecord = await getDoc(doc(db, 'admins', user.uid));
+      }
+      isAdmin = adminRecord.exists();
       if (generation !== authGeneration) return;
       if (isAdmin) {
-        const isMasterAdmin = user.email?.toLowerCase() === 'titanbusinesspros@gmail.com';
-        $('admin-home-management').hidden = !isMasterAdmin;
-        $('admin-homestead-link').textContent = isMasterAdmin ?
+        companyId = adminRecord.data().companyId || 'titan';
+        const isMasterAdmin = companyId === 'titan' && user.email?.toLowerCase() === 'titanbusinesspros@gmail.com';
+        const isCompanyOwner = isMasterAdmin || (companyId !== 'titan' && adminRecord.data().role === 'owner');
+        $('admin-home-management').hidden = !isCompanyOwner;
+        $('company-profile-management').hidden = companyId === 'titan' || !isCompanyOwner;
+        $('company-invites-management').hidden = !isMasterAdmin;
+        $('admin-homestead-link').textContent = isCompanyOwner ?
           'Edit homestead page' : 'View homestead page';
+        $('admin-homestead-link').href = companyLink('homestead.html', companyId);
+        $('open-private-profiles').href = companyLink('profiles.html', companyId);
+        $('admin-company-name').textContent = companyId === 'titan' ? 'Titan Business Pros' : 'Loading company...';
+        if (companyId !== 'titan') {
+          const company = await getDoc(doc(db, 'companies', companyId));
+          $('admin-company-name').textContent = company.data()?.name || 'Homestead company';
+          if (isCompanyOwner) $('company-profile-name').value = company.data()?.name === 'Homestead company' ? '' : company.data()?.name || '';
+        }
+        if (isMasterAdmin) loadCompanies();
         showView('admin-view');
         watchAdminRoster(generation);
       } else {
+        companyId = requestedCompany();
         await sanitizeMyContactsCall();
         if (generation !== authGeneration) return;
+        $('company-select').value = companyId;
+        companyListingsUnsub = onSnapshot(collection(db, 'companyListings'), snapshot => {
+          const select = $('company-select');
+          select.replaceChildren(new Option('Titan Business Pros', 'titan'));
+          for (const item of snapshot.docs) {
+            if (item.data().active !== false) select.add(new Option(item.data().name || 'Homestead company', item.id));
+          }
+          if ([...select.options].some(option => option.value === companyId)) select.value = companyId;
+        }, error => status('profile-message', readableError(error), true));
+        for (const link of document.querySelectorAll('#member-view a[href="questionnaire.html"], #member-view a[href="skills.html"], #member-view a[href="homestead.html"]')) {
+          link.href = companyLink(link.getAttribute('href'), companyId);
+        }
         showView('member-view');
         watchProfile(user.uid);
-        questionnaireUnsub = onSnapshot(doc(db, 'questionnaires', user.uid), snapshot => {
+        questionnaireUnsub = onSnapshot(scopedDoc('questionnaires', user.uid), snapshot => {
           questionnaireSaved = snapshot.exists() ? snapshot.data() : null;
           updateQuestionnaireStatus();
         }, error => status('profile-message', readableError(error), true));
-        questionnaireConfigUnsub = onSnapshot(doc(db, 'questionnaireConfig', 'main'), snapshot => {
+        questionnaireConfigUnsub = onSnapshot(scopedDoc('questionnaireConfig', 'main'), snapshot => {
           questionnaireSettings = snapshot.data() || null;
           $('questionnaire-section').hidden = questionnaireSettings?.enabled === false;
           updateQuestionnaireStatus();
         }, error => status('profile-message', readableError(error), true));
-        skillsUnsub = onSnapshot(doc(db, 'skills', user.uid), snapshot => {
+        skillsUnsub = onSnapshot(scopedDoc('skills', user.uid), snapshot => {
           memberSkillEntries = snapshot.exists() ? (snapshot.data().entries || []) : [];
           updateSkillStatus();
         }, error => status('profile-message', readableError(error), true));
-        skillCatalogUnsub = onSnapshot(collection(db, 'skillCatalog'), snapshot => {
+        skillCatalogUnsub = onSnapshot(scopedCollection('skillCatalog'), snapshot => {
           if (generation !== authGeneration) return;
           memberSkillCatalog = buildSkillCatalog(snapshot.docs.map(item => ({ id: item.id, ...item.data() })));
           updateSkillStatus();
@@ -380,9 +500,11 @@ function start() {
     profileUnsub = onSnapshot(doc(db, 'users', uid), snapshot => {
       currentProfile = snapshot.exists() ? snapshot.data() : null;
       const profile = currentProfile;
-      $('profile-status').textContent = statusLabel(profile?.status || 'none');
-      renderInterview(profile?.interview);
-      renderBookingInvite(profile?.bookingInvite, profile?.interview);
+      if (companyId === 'titan') {
+        $('profile-status').textContent = statusLabel(profile?.status || 'none');
+        renderInterview(profile?.interview);
+        renderBookingInvite(profile?.bookingInvite, profile?.interview);
+      }
       if (!profileInitialized) {
         $('profile-name').value = profile?.profile?.name || '';
         $('profile-location').value = profile?.profile?.location || '';
@@ -395,6 +517,12 @@ function start() {
         profileInitialized = true;
       }
       if (pendingPhotos === null) renderPhotos();
+    }, error => status('profile-message', readableError(error), true));
+    if (companyId !== 'titan') applicationUnsub = onSnapshot(scopedDoc('applications', uid), snapshot => {
+      const application = snapshot.data() || {};
+      $('profile-status').textContent = statusLabel(application.status || 'none');
+      renderInterview(application.interview);
+      renderBookingInvite(application.bookingInvite, application.interview);
     }, error => status('profile-message', readableError(error), true));
   }
   function renderInterview(interview) {
@@ -456,7 +584,7 @@ function start() {
     const button = $('refresh-booking-slots');
     button.disabled = true;
     try {
-      const { data } = await listInterviewSlotsCall();
+      const { data } = await listInterviewSlotsCall({ companyId });
       const slots = $('booking-slots');
       slots.replaceChildren();
       for (const start of data.slots || []) {
@@ -479,7 +607,7 @@ function start() {
     for (const button of buttons) button.disabled = true;
     status('booking-message', 'Booking your interview...');
     try {
-      await bookInterviewSlotCall({ start });
+      await bookInterviewSlotCall({ start, companyId });
       status('booking-message', 'Interview booked. You can see it on your profile and in your private inbox.');
       $('booking-slots').replaceChildren();
     } catch (error) {
@@ -528,7 +656,7 @@ function start() {
     if (updateWordCount() > 500) return status('profile-message', 'Keep your introduction within 500 words.', true);
     const button = $('save-profile');
     button.disabled = true;
-    const data = { profile: { name, location }, bio, website, socialLinks, photos: pendingPhotos === null ? savedPhotos() : pendingPhotos };
+    const data = { profile: { name, location }, bio, website, socialLinks, photos: pendingPhotos === null ? savedPhotos() : pendingPhotos, companyId };
     try {
       await saveProfileCall(data);
       pendingPhotos = null;
@@ -542,7 +670,7 @@ function start() {
   });
 
   function watchMemberConversation(uid) {
-    memberConversationUnsub = onSnapshot(query(collection(db, 'conversations', uid, 'messages'), orderBy('createdAt', 'asc')), snapshot => {
+    memberConversationUnsub = onSnapshot(query(scopedCollection('conversations', uid, 'messages'), orderBy('createdAt', 'asc')), snapshot => {
       const opened = !snapshot.empty;
       $('inbox-empty').hidden = opened;
       $('member-chat').hidden = !opened;
@@ -559,7 +687,7 @@ function start() {
     const button = event.target.querySelector('button');
     button.disabled = true;
     try {
-      await sendMessageCall({ targetUid: currentUser.uid, text });
+      await sendMessageCall({ targetUid: currentUser.uid, text, companyId });
       $('member-message').value = '';
       status('member-message-status', 'Reply sent.');
     } catch (error) {

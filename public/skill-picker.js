@@ -5,12 +5,17 @@ import { initializeAppCheck, ReCaptchaEnterpriseProvider } from 'https://www.gst
 import { getFunctions, httpsCallable } from 'https://www.gstatic.com/firebasejs/13.1.0/firebase-functions.js';
 import { firebaseConfig, appCheckSiteKey } from './firebase-config.js';
 import { buildSkillCatalog } from './skills.js';
+import { requestedCompany, companySegments, companyLink } from './company-context.js';
 
 const $ = id => document.getElementById(id);
 const app = initializeApp(firebaseConfig);
 initializeAppCheck(app, { provider: new ReCaptchaEnterpriseProvider(appCheckSiteKey), isTokenAutoRefreshEnabled: true });
 const auth = getAuth(app);
 const db = getFirestore(app);
+const companyId = requestedCompany();
+const scopedDoc = (...parts) => doc(db, ...companySegments(companyId, ...parts));
+const scopedCollection = (...parts) => collection(db, ...companySegments(companyId, ...parts));
+document.querySelectorAll('a[href="./"]').forEach(link => { link.href = companyLink('./', companyId); });
 const saveSkills = httpsCallable(getFunctions(app, 'us-west2'), 'saveSkills');
 const selected = new Map();
 let catalog = buildSkillCatalog();
@@ -135,7 +140,7 @@ onAuthStateChanged(auth, async user => {
     if ((await getDoc(doc(db, 'blockedUsers', user.uid))).exists()) return showAccess('This account cannot use Homesteader.');
     if ((await getDoc(doc(db, 'admins', user.uid))).exists()) return showAccess('Admins do not need applicant skills.');
     if (!(await getDoc(doc(db, 'users', user.uid))).exists()) return showAccess('Save your applicant profile first, then return to add skills.');
-    const saved = await getDoc(doc(db, 'skills', user.uid));
+    const saved = await getDoc(scopedDoc('skills', user.uid));
     if (generation !== authGeneration) return;
     if (saved.exists() && saved.data().version === 1) {
       for (const entry of saved.data().entries || []) {
@@ -145,7 +150,7 @@ onAuthStateChanged(auth, async user => {
         }
       }
     }
-    catalogUnsub = onSnapshot(collection(db, 'skillCatalog'), snapshot => {
+    catalogUnsub = onSnapshot(scopedCollection('skillCatalog'), snapshot => {
       if (generation !== authGeneration) return;
       catalog = buildSkillCatalog(snapshot.docs.map(item => ({ id: item.id, ...item.data() })));
       for (const id of selected.keys()) if (!catalog.byId.has(id)) selected.delete(id);
@@ -189,7 +194,7 @@ $('skills-form').addEventListener('submit', async event => {
   message.className = 'message';
   message.textContent = 'Saving skills...';
   try {
-    await saveSkills({ entries });
+    await saveSkills({ entries, companyId });
     message.className = 'message success';
     message.textContent = 'Your skills have been saved for admin review.';
   } catch (error) {

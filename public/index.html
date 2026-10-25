@@ -38,22 +38,23 @@
       <div class="welcome">
         <span class="eyebrow">A place to begin</span>
         <h1>Find your place in the homestead.</h1>
-        <p>Tell the Homesteader team about yourself. Your introduction and photos are private and can be viewed only by you and the admins.</p>
+        <p>Introduce yourself to homestead companies. Authorized admins at every company can search and review applicant profiles. Your messages, interviews, questionnaire, skills, and team assignments stay with the company you choose.</p>
       </div>
       <div class="card auth-card">
         <span class="eyebrow">Your account</span>
         <h2>Welcome to Homesteader</h2>
-        <p class="muted">Use a Google account to join or sign back in. Your introduction is shared only with you and the admin team.</p>
+        <p class="muted">Use a Google account to join or sign back in. Authorized homestead company admins can search your applicant profile.</p>
         <button id="google-sign-in" class="google-button full" type="button"><span class="google-mark" aria-hidden="true">G</span>Continue with Google</button>
         <p id="auth-message" class="message" role="status"></p>
       </div>
     </section>
 
     <section id="member-view" class="member-layout" hidden>
+      <div class="card company-picker"><label for="company-select">Homestead company</label><select id="company-select"><option value="titan">Titan Business Pros</option></select><p class="field-help">Your profile can be found by all homestead companies. Questionnaires, skills, messages, interviews, and teams belong to the company you choose here.</p></div>
       <div class="page-intro">
         <span class="eyebrow">Your introduction</span>
         <h1>Tell us about yourself.</h1>
-        <p>Only you and Homesteader admins can see your information. You can return and update your introduction; photos can be changed once every 30 days.</p>
+        <p>Authorized admins at all homestead companies can review your profile. Company questionnaires, skills, messages, interviews, and teams are separate. You can update your introduction; photos can be changed once every 30 days.</p>
       </div>
       <section id="interview-notice" class="card interview-notice" hidden>
         <span class="eyebrow">Interview invitation</span><h2 id="interview-heading"></h2>
@@ -125,6 +126,7 @@
     <section id="admin-view" class="state-card" hidden>
       <span class="eyebrow">Admin workspace</span>
       <h1>Review applicants</h1>
+      <p id="admin-company-name" class="muted"></p>
       <p>Review applicant profiles, skill rankings, questionnaire answers, and private conversations. Team rosters are listed below.</p>
       <a id="open-private-profiles" class="primary-button button-link" href="profiles.html">Open private profiles</a>
       <a id="admin-homestead-link" class="secondary-button button-link" href="homestead.html">View homestead page</a>
@@ -137,6 +139,21 @@
         </form>
         <p id="home-admin-message" class="message" role="status"></p>
         <a class="text-button" href="profiles.html#admin-management">Manage active and pending admins</a>
+      </section>
+      <section id="company-profile-management" class="admin-home-management" hidden>
+        <h2>Your homestead company</h2>
+        <p class="muted">Set the name applicants will see when they choose your company.</p>
+        <form id="company-profile-form"><label for="company-profile-name">Company name</label><div class="admin-email-controls"><input id="company-profile-name" maxlength="100" required><button class="primary-button" type="submit">Save company</button></div></form>
+        <p id="company-profile-message" class="message" role="status"></p>
+      </section>
+      <section id="company-invites-management" class="admin-home-management" hidden>
+        <h2>Add a homestead company</h2>
+        <p class="muted">Only the Titan Business Pros master account can invite a new company owner. The owner creates their account when they sign in with this Google email.</p>
+        <form id="company-invite-form"><label for="company-invite-email">Company owner's Google email</label><div class="admin-email-controls"><input id="company-invite-email" type="email" maxlength="254" required placeholder="owner@example.com"><button class="primary-button" type="submit">Invite company</button></div></form>
+        <p id="company-invite-message" class="message" role="status"></p>
+        <h3>Homestead companies</h3><div id="company-list" class="admin-list"></div>
+        <p id="company-sync-status" class="field-help" role="status"></p>
+        <h3>Pending owners</h3><div id="company-pending-list" class="admin-list"></div>
       </section>
       <section class="admin-roster" aria-labelledby="admin-roster-title">
         <h2 id="admin-roster-title">Homestead teams</h2>

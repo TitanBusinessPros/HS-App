@@ -10,8 +10,18 @@ service cloud.firestore {
     function isAdmin() {
       return active() && exists(/databases/$(database)/documents/admins/$(request.auth.uid));
     }
+    function companyAdmin(companyId) {
+      return isAdmin() && get(/databases/$(database)/documents/admins/$(request.auth.uid)).data.companyId == companyId;
+    }
+    function titanAdmin() {
+      return isAdmin() && (!('companyId' in get(/databases/$(database)/documents/admins/$(request.auth.uid)).data) ||
+        get(/databases/$(database)/documents/admins/$(request.auth.uid)).data.companyId == 'titan');
+    }
     function owns(uid) {
       return active() && request.auth.uid == uid;
+    }
+    function companyApplicant(companyId, uid) {
+      return owns(uid) && !exists(/databases/$(database)/documents/companies/$(companyId)/blockedApplicants/$(uid));
     }
 
     // All profile and message writes go through moderated Cloud Functions.
@@ -20,29 +30,33 @@ service cloud.firestore {
       allow list, write: if false;
     }
     match /blockedUsers/{uid} {
-      allow get: if (googleAccount() && request.auth.uid == uid) || isAdmin();
-      allow list: if isAdmin();
+      allow get: if (googleAccount() && request.auth.uid == uid) || titanAdmin();
+      allow list: if titanAdmin();
       allow write: if false;
     }
     match /users/{uid} {
-      allow get: if owns(uid) || isAdmin();
-      allow list: if isAdmin();
+      allow get: if owns(uid) || titanAdmin();
+      allow list: if titanAdmin();
+      allow write: if false;
+    }
+    match /applicantDirectory/{uid} {
+      allow get, list: if isAdmin();
       allow write: if false;
     }
     match /applicantSummaries/{uid} {
-      allow get, list: if isAdmin();
+      allow get, list: if titanAdmin();
       allow write: if false;
     }
     match /teams/{teamId} {
-      allow get, list: if isAdmin();
+      allow get, list: if titanAdmin();
       allow write: if false;
       match /members/{uid} {
-        allow get, list: if isAdmin();
+        allow get, list: if titanAdmin();
         allow write: if false;
       }
     }
     match /questionnaires/{uid} {
-      allow get: if owns(uid) || isAdmin();
+      allow get: if owns(uid) || titanAdmin();
       allow list, write: if false;
     }
     match /questionnaireConfig/{configId} {
@@ -50,7 +64,7 @@ service cloud.firestore {
       allow list, write: if false;
     }
     match /skills/{uid} {
-      allow get: if owns(uid) || isAdmin();
+      allow get: if owns(uid) || titanAdmin();
       allow list, write: if false;
     }
     match /skillCatalog/{skillId} {
@@ -58,7 +72,7 @@ service cloud.firestore {
       allow write: if false;
     }
     match /skillRankings/{skillId}/applicants/{uid} {
-      allow get, list: if isAdmin();
+      allow get, list: if titanAdmin();
       allow write: if false;
     }
     match /homesteadPage/{pageId} {
@@ -66,18 +80,86 @@ service cloud.firestore {
       allow list, write: if false;
     }
     match /homesteadPhotos/{photoId} {
-      allow get, list: if isAdmin() || (active() &&
+      allow get, list: if titanAdmin() || (active() &&
         exists(/databases/$(database)/documents/homesteadPage/main) &&
         get(/databases/$(database)/documents/homesteadPage/main).data.published == true);
       allow write: if false;
     }
     match /conversations/{uid} {
-      allow get: if isAdmin();
-      allow list: if isAdmin();
+      allow get: if titanAdmin();
+      allow list: if titanAdmin();
       allow write: if false;
       match /messages/{messageId} {
-        allow get, list: if owns(uid) || isAdmin();
+        allow get, list: if owns(uid) || titanAdmin();
         allow write: if false;
+      }
+    }
+    match /companyListings/{companyId} {
+      allow get, list: if active();
+      allow write: if false;
+    }
+    match /companies/{companyId} {
+      allow get: if companyAdmin(companyId);
+      allow list, write: if false;
+      match /applications/{uid} {
+        allow get: if companyApplicant(companyId, uid) || companyAdmin(companyId);
+        allow list: if companyAdmin(companyId);
+        allow write: if false;
+      }
+      match /applicantSummaries/{uid} {
+        allow get, list: if companyAdmin(companyId);
+        allow write: if false;
+      }
+      match /blockedApplicants/{uid} {
+        allow get: if owns(uid) || companyAdmin(companyId);
+        allow list: if companyAdmin(companyId);
+        allow write: if false;
+      }
+      match /teams/{teamId} {
+        allow get, list: if companyAdmin(companyId);
+        allow write: if false;
+        match /members/{uid} {
+          allow get, list: if companyAdmin(companyId);
+          allow write: if false;
+        }
+      }
+      match /questionnaires/{uid} {
+        allow get: if companyApplicant(companyId, uid) || companyAdmin(companyId);
+        allow list, write: if false;
+      }
+      match /questionnaireConfig/{configId} {
+        allow get: if active() && configId == 'main';
+        allow list, write: if false;
+      }
+      match /skills/{uid} {
+        allow get: if companyApplicant(companyId, uid) || companyAdmin(companyId);
+        allow list, write: if false;
+      }
+      match /skillCatalog/{skillId} {
+        allow get, list: if active();
+        allow write: if false;
+      }
+      match /skillRankings/{skillId}/applicants/{uid} {
+        allow get, list: if companyAdmin(companyId);
+        allow write: if false;
+      }
+      match /homesteadPage/{pageId} {
+        allow get: if active() && pageId == 'main';
+        allow list, write: if false;
+      }
+      match /homesteadPhotos/{photoId} {
+        allow get, list: if companyAdmin(companyId) || (active() &&
+          exists(/databases/$(database)/documents/companies/$(companyId)/homesteadPage/main) &&
+          get(/databases/$(database)/documents/companies/$(companyId)/homesteadPage/main).data.published == true);
+        allow write: if false;
+      }
+      match /conversations/{uid} {
+        allow get, list: if companyAdmin(companyId);
+        allow write: if false;
+        match /messages/{messageId} {
+          allow get, list: if companyApplicant(companyId, uid) || companyAdmin(companyId);
+          allow write: if false;
+        }
       }
     }
     match /{document=**} {

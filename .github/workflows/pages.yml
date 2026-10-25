@@ -34,6 +34,11 @@ jobs:
             sed -i -E "s/src=\"([^\"]+\.js)\"/src=\"\1?v=$GITHUB_SHA\"/g" "$page"
             grep -q "\.js?v=$GITHUB_SHA" "$page" || ! grep -q '<script' "$page"
           done
+          # Version relative ES module imports as well as their HTML entry points.
+          # Otherwise a cached dependency can be paired with a newer app.js.
+          for script in public/*.js; do
+            sed -i -E "s@(from ['\"]\./[^'\"?]+\.js)(['\"])@\1?v=$GITHUB_SHA\2@g" "$script"
+          done
       - name: Upload website
         uses: actions/upload-pages-artifact@v4
         with:

@@ -27,6 +27,8 @@
   <main>
     <section id="initial-loading" class="state-card" role="status">
       <h1>Opening Homesteader...</h1>
+      <p id="startup-help" hidden>Homesteader is taking too long to open. Check your connection, then reload this page.</p>
+      <button id="startup-reload" class="primary-button" type="button" hidden>Reload Homesteader</button>
     </section>
 
     <section id="setup" class="state-card" hidden>
@@ -182,6 +184,27 @@
     </div>
   </footer>
   <script src="pwa.js" defer></script>
+  <script>
+    (() => {
+      const loading = document.getElementById('initial-loading');
+      const help = document.getElementById('startup-help');
+      const reload = document.getElementById('startup-reload');
+      reload.addEventListener('click', () => {
+        const url = new URL(location.href);
+        url.searchParams.set('reload', Date.now().toString());
+        location.replace(url.href);
+      });
+      const revealHelp = () => {
+        if (!loading.hidden) {
+          help.hidden = false;
+          reload.hidden = false;
+        }
+      };
+      window.addEventListener('error', revealHelp);
+      window.addEventListener('unhandledrejection', revealHelp);
+      setTimeout(revealHelp, 12000);
+    })();
+  </script>
   <script type="module" src="app.js"></script>
 </body>
 </html>

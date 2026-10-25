@@ -414,12 +414,16 @@ function start() {
         watchAdminRoster(generation);
       } else {
         companyId = requestedCompany();
-        await sanitizeMyContactsCall();
         if (generation !== authGeneration) return;
         for (const link of document.querySelectorAll('#member-view a[href="questionnaire.html"], #member-view a[href="skills.html"], #member-view a[href="homestead.html"]')) {
           link.href = companyLink(link.getAttribute('href'), companyId);
         }
         showView('member-view');
+        // Stored legacy contact fields still need cleanup, but this callable can
+        // take up to two minutes and must not block the applicant's profile.
+        sanitizeMyContactsCall().catch(error => {
+          if (generation === authGeneration) status('member-message-status', `Could not finish updating old contact details: ${readableError(error)}`, true);
+        });
         watchProfile(user.uid);
         questionnaireUnsub = onSnapshot(scopedDoc('questionnaires', user.uid), snapshot => {
           questionnaireSaved = snapshot.exists() ? snapshot.data() : null;

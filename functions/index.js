@@ -17,7 +17,7 @@ const photoPattern = /^data:image\/jpeg;base64,([A-Za-z0-9+/]+={0,2})$/;
 const monthMs = 30 * 24 * 60 * 60 * 1000;
 const reviewStatuses = new Set(['submitted', 'reviewing', 'good-fit', 'declined']);
 const customSkillPattern = /^custom_[a-f0-9]{32}$/;
-const applicationLimit = 500;
+const applicationLimit = 10000;
 const applicationStatsRef = db.doc('applicationStats/main');
 const questionnaireConfigRef = db.doc('questionnaireConfig/main');
 const masterAdminEmail = 'titanbusinesspros@gmail.com';
@@ -234,7 +234,7 @@ export const saveProfile = onCall(options, async request => {
       updatedAt: now
     }, { merge: true });
   });
-  if (result?.full) throw new HttpsError('resource-exhausted', 'Applications are full at 500 profiles. Please try again after a place opens.');
+  if (result?.full) throw new HttpsError('resource-exhausted', 'Applications are full at 10,000 profiles. Please try again after a place opens.');
   return { saved: true };
 });
 

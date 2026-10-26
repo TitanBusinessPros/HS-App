@@ -21,7 +21,7 @@ async function request(uid, path, method = 'GET') {
   const host = process.env.FIRESTORE_EMULATOR_HOST;
   assert.ok(host, 'Firestore emulator must be running');
   const response = await fetch(`http://${host}/v1/projects/${projectId}/databases/(default)/documents/${path}`, {
-    method, headers: { Authorization: `Bearer ${token(uid)}`,
+    method, headers: { ...(uid ? { Authorization: `Bearer ${token(uid)}` } : {}),
       ...(method === 'PATCH' ? { 'Content-Type': 'application/json' } : {}) },
     ...(method === 'PATCH' ? { body: JSON.stringify({ fields: { leaked: { booleanValue: true } } }) } : {})
   });
@@ -35,8 +35,14 @@ await Promise.all([
   db.doc('users/applicant').set({ profile: { name: 'Applicant' }, status: 'reviewing' }),
   db.doc('applicantDirectory/applicant').set({ name: 'Applicant' }),
   db.doc('questionnaires/applicant').set({ answers: [1] }),
+  db.doc('homesteadPage/main').set({ name: 'Titan Homestead', published: true }),
+  db.doc('homesteadPhotos/publicPhoto').set({ photo: 'public photo' }),
   db.doc(`companies/${companyA}`).set({ active: true, ownerUid: 'adminA' }),
   db.doc(`companies/${companyB}`).set({ active: true, ownerUid: 'adminB' }),
+  db.doc(`companies/${companyA}/homesteadPage/main`).set({ name: 'Published Homestead', published: true }),
+  db.doc(`companies/${companyA}/homesteadPhotos/publicPhoto`).set({ photo: 'public photo' }),
+  db.doc(`companies/${companyB}/homesteadPage/main`).set({ name: 'Draft Homestead', published: false }),
+  db.doc(`companies/${companyB}/homesteadPhotos/privatePhoto`).set({ photo: 'private photo' }),
   db.doc(`companies/${companyA}/questionnaires/applicant`).set({ answers: [2] }),
   db.doc(`companies/${companyB}/questionnaires/applicant`).set({ answers: [3] }),
   db.doc(`companies/${companyA}/conversations/applicant/messages/a`).set({ text: 'A private message' }),
@@ -66,7 +72,16 @@ const cases = [
   ['adminB', `companies/${companyA}/conversations/applicant/messages/a`, 403],
   ['applicant', `companies/${companyA}/questionnaires/applicant`, 200],
   ['outsider', `companies/${companyA}/questionnaires/applicant`, 403],
-  ['adminA', `companies/${companyA}/questionnaires/applicant`, 403, 'PATCH']
+  ['adminA', `companies/${companyA}/questionnaires/applicant`, 403, 'PATCH'],
+  [null, 'homesteadPage/main', 200],
+  [null, 'homesteadPhotos/publicPhoto', 200],
+  [null, `companies/${companyA}/homesteadPage/main`, 200],
+  [null, `companies/${companyA}/homesteadPhotos/publicPhoto`, 200],
+  [null, `companies/${companyB}/homesteadPage/main`, 403],
+  [null, `companies/${companyB}/homesteadPhotos/privatePhoto`, 403],
+  [null, 'users/applicant', 403],
+  [null, 'questionnaires/applicant', 403],
+  [null, 'companyListings', 403]
 ];
 
 for (const [uid, path, expected, method] of cases) {
@@ -84,5 +99,9 @@ for (const uid of ['applicant', 'futureApplicant']) {
       `${uid} can read ${id}'s published page`);
   }
 }
+
+await db.doc('homesteadPage/main').update({ published: false });
+assert.equal((await request(null, 'homesteadPage/main')).status, 403, 'unpublished Titan page stays private');
+assert.equal((await request(null, 'homesteadPhotos/publicPhoto')).status, 403, 'unpublished Titan photos stay private');
 
 console.log(`${cases.length} tenant isolation checks and 10 homestead discovery checks passed`);

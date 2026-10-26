@@ -140,6 +140,9 @@ main{width:100%;flex:1}
 .site-header .brand{grid-column:2;justify-self:center}
 .site-header .header-actions,.site-header > .text-button{grid-column:3;justify-self:end}
 .page-intro{max-width:780px;margin:0 auto 34px;text-align:center}
+.homestead-page-actions{display:flex;align-items:center;justify-content:center;gap:14px;flex-wrap:wrap}
+.homestead-page-actions .secondary-button{margin-top:0}
+#homestead-sign-in-prompt{text-align:center}
 .page-intro > p,.welcome > p{margin-left:auto;margin-right:auto}
 .auth-layout{grid-template-columns:1fr;justify-items:center;max-width:760px;min-height:0;margin:0 auto;gap:34px}
 .welcome{max-width:700px;text-align:center}

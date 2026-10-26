@@ -76,11 +76,11 @@ service cloud.firestore {
       allow write: if false;
     }
     match /homesteadPage/{pageId} {
-      allow get: if active() && pageId == 'main';
+      allow get: if pageId == 'main' && (active() || resource.data.published == true);
       allow list, write: if false;
     }
     match /homesteadPhotos/{photoId} {
-      allow get, list: if titanAdmin() || (active() &&
+      allow get, list: if titanAdmin() || (
         exists(/databases/$(database)/documents/homesteadPage/main) &&
         get(/databases/$(database)/documents/homesteadPage/main).data.published == true);
       allow write: if false;
@@ -144,11 +144,15 @@ service cloud.firestore {
         allow write: if false;
       }
       match /homesteadPage/{pageId} {
-        allow get: if active() && pageId == 'main';
+        allow get: if pageId == 'main' && (active() || (resource.data.published == true &&
+          exists(/databases/$(database)/documents/companies/$(companyId)) &&
+          get(/databases/$(database)/documents/companies/$(companyId)).data.active == true));
         allow list, write: if false;
       }
       match /homesteadPhotos/{photoId} {
-        allow get, list: if companyAdmin(companyId) || (active() &&
+        allow get, list: if companyAdmin(companyId) || (
+          exists(/databases/$(database)/documents/companies/$(companyId)) &&
+          get(/databases/$(database)/documents/companies/$(companyId)).data.active == true &&
           exists(/databases/$(database)/documents/companies/$(companyId)/homesteadPage/main) &&
           get(/databases/$(database)/documents/companies/$(companyId)/homesteadPage/main).data.published == true);
         allow write: if false;

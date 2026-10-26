@@ -5,8 +5,13 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#234837">
   <meta name="app-version" content="local">
-  <meta name="robots" content="noindex,nofollow">
   <title>About the Homestead | Homesteader</title>
+  <meta name="description" content="Explore a homestead page on Homesteader.">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="Explore a homestead | Homesteader">
+  <meta property="og:description" content="Meet a homestead and see its published details and photos.">
+  <meta property="og:image" content="https://titanbusinesspros.github.io/HS-App/icons/icon-512.png">
+  <meta name="twitter:card" content="summary">
   <link rel="icon" href="favicon.ico" sizes="any">
   <link rel="icon" type="image/png" sizes="96x96" href="icons/favicon-96x96.png">
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
@@ -21,12 +26,13 @@
   <p id="pwa-status" class="pwa-status" role="status" hidden></p>
   <main class="homestead-page">
     <section id="loading" class="state-card"><h1>Opening the homestead...</h1><p id="startup-help" hidden>This page is taking too long to open. Check your connection, then reload.</p><button id="startup-reload" class="primary-button" type="button" hidden>Reload homestead page</button></section>
-    <section id="access-message" class="state-card" hidden><h1>Sign in to continue</h1><p id="access-text">Sign in with Google to see the homestead.</p><a class="primary-button button-link" href="./">Go to Homesteader</a></section>
+    <section id="access-message" class="state-card" hidden><h1 id="access-title">Sign in to continue</h1><p id="access-text">Sign in with Google to see the homestead.</p><a class="primary-button button-link" href="./">Go to Homesteader</a></section>
     <section id="page-view" hidden>
-      <div class="page-intro"><span class="eyebrow">Meet the place</span><h1 id="homestead-name">About the homestead</h1><a class="text-button" href="./">Back to Homesteader</a></div>
+      <div class="page-intro"><span class="eyebrow">Meet the place</span><h1 id="homestead-name">About the homestead</h1><div class="homestead-page-actions"><button id="share-homestead" class="secondary-button" type="button" hidden>Share this homestead</button><a class="text-button" href="./">Back to Homesteader</a></div><p id="homestead-share-status" class="message" role="status" hidden></p></div>
       <p id="page-message" class="message" role="status"></p>
       <div id="homestead-empty" class="card"><p>The homestead team is preparing this page.</p></div>
       <div id="homestead-content" hidden>
+        <p id="homestead-sign-in-prompt" class="card" hidden>Interested in applying? <a id="homestead-sign-in-link" href="./">Sign in with Google</a> to complete this homestead's questionnaire.</p>
         <section id="homestead-about-section" class="card homestead-section"><h2>About this homestead</h2><p id="homestead-description" class="homestead-description"></p></section>
         <section id="homestead-details-section" class="card homestead-section"><h2>Homestead details</h2><div id="homestead-details" class="homestead-details"></div></section>
         <section class="card homestead-section"><div class="section-heading"><h2>Photos of the homestead</h2><span id="homestead-photo-count" class="count">0</span></div><div id="homestead-gallery" class="homestead-gallery"></div><p id="homestead-no-photos" class="muted">Photos will appear here when the team adds them.</p></section>

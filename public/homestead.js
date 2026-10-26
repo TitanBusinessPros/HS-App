@@ -48,9 +48,10 @@ function status(id, message, error = false) {
   $(id).className = `message ${error ? 'error' : 'success'}`;
 }
 
-function showAccess(message) {
+function showAccess(message, title = 'Sign in to continue') {
   $('loading').hidden = true;
   $('page-view').hidden = true;
+  $('access-title').textContent = title;
   $('access-text').textContent = message;
   $('access-message').hidden = false;
 }
@@ -153,11 +154,14 @@ function renderPage(data) {
   const published = data?.published === true;
   pagePublished = published;
   updateQuestionnaireVisibility();
+  $('share-homestead').hidden = !published;
+  $('homestead-sign-in-prompt').hidden = !published || Boolean(auth.currentUser);
   $('homestead-empty').hidden = published;
   $('homestead-content').hidden = !published && !isAdmin;
   $('homestead-about-section').hidden = !published;
   $('homestead-details-section').hidden = !published;
   $('homestead-name').textContent = published ? data.name : 'About the homestead';
+  document.title = published ? `${data.name} | Homesteader` : 'About the Homestead | Homesteader';
   if (published) {
     $('homestead-description').textContent = data.description || '';
     const details = $('homestead-details');
@@ -224,12 +228,36 @@ function watchPhotos(generation) {
   }, error => status('page-message', error.message || 'Could not load homestead photos.', true));
 }
 
+function openPage(generation, publicVisitor = false) {
+  $('loading').hidden = true;
+  $('access-message').hidden = true;
+  $('page-view').hidden = false;
+  pageUnsub = onSnapshot(scopedDoc('homesteadPage', 'main'), snapshot => {
+    if (generation !== authGeneration) return;
+    const data = snapshot.exists() ? snapshot.data() : null;
+    renderPage(data);
+    if (isAdmin || data?.published === true) watchPhotos(generation);
+    else if (photosUnsub) {
+      photosUnsub();
+      photosUnsub = null;
+      photos = [];
+      renderPhotos();
+    }
+  }, error => {
+    if (generation !== authGeneration) return;
+    if (publicVisitor && error.code === 'permission-denied') {
+      showAccess('This homestead page is not published or is unavailable.', 'Homestead page unavailable');
+    } else status('page-message', error.message || 'Could not load homestead details.', true);
+  });
+}
+
 onAuthStateChanged(auth, async user => {
   const generation = ++authGeneration;
   if (pageUnsub) pageUnsub();
   if (photosUnsub) photosUnsub();
   if (questionnaireConfigUnsub) questionnaireConfigUnsub();
   pageUnsub = photosUnsub = questionnaireConfigUnsub = null;
+  companyId = requestedCompany();
   editorInitialized = false;
   isAdmin = false;
   isMasterAdmin = false;
@@ -247,9 +275,19 @@ onAuthStateChanged(auth, async user => {
     $('homestead-questions-list').replaceChildren();
   }
   renderPhotos();
+  $('homestead-share-status').hidden = true;
+  status('homestead-share-status', '');
   $('account-email').textContent = user?.email || '';
   $('sign-out').hidden = !user;
-  if (!user) return showAccess('Sign in with Google to see the homestead.');
+  if (!user) {
+    document.querySelectorAll('a[href="./"], a[href^="./?company="]').forEach(link => {
+      link.href = companyLink('./', companyId);
+    });
+    $('admin-editor').hidden = true;
+    $('homestead-sign-in-link').href = companyLink('./', companyId);
+    openPage(generation, true);
+    return;
+  }
   try {
     const token = await user.getIdTokenResult();
     if (token.claims.firebase?.sign_in_provider !== 'google.com') return showAccess('Sign in with Google to continue.');
@@ -259,25 +297,14 @@ onAuthStateChanged(auth, async user => {
     if (isAdmin) companyId = adminRecord.data().companyId || 'titan';
     isMasterAdmin = isAdmin && (companyId === 'titan' ?
       user.email?.toLowerCase() === 'titanbusinesspros@gmail.com' : adminRecord.data().role === 'owner');
-    document.querySelectorAll('a[href="./"]').forEach(link => { link.href = companyLink('./', companyId); });
+    document.querySelectorAll('a[href="./"], a[href^="./?company="]').forEach(link => {
+      link.href = companyLink('./', companyId);
+    });
     if (generation !== authGeneration) return;
     if (questionnairePanel) $('homestead-questionnaire-profile-link').href = companyLink('./', companyId);
+    $('homestead-sign-in-link').href = companyLink('./', companyId);
     $('admin-editor').hidden = !isMasterAdmin;
-    $('loading').hidden = true;
-    $('access-message').hidden = true;
-    $('page-view').hidden = false;
-    pageUnsub = onSnapshot(scopedDoc('homesteadPage', 'main'), snapshot => {
-      if (generation !== authGeneration) return;
-      const data = snapshot.exists() ? snapshot.data() : null;
-      renderPage(data);
-      if (isAdmin || data?.published === true) watchPhotos(generation);
-      else if (photosUnsub) {
-        photosUnsub();
-        photosUnsub = null;
-        photos = [];
-        renderPhotos();
-      }
-    }, error => status('page-message', error.message || 'Could not load homestead details.', true));
+    openPage(generation);
     if (!isAdmin && questionnairePanel) questionnaireConfigUnsub = onSnapshot(scopedDoc('questionnaireConfig', 'main'), snapshot => {
       if (generation !== authGeneration) return;
       const previousRevision = questionnaireRevision;
@@ -296,6 +323,30 @@ onAuthStateChanged(auth, async user => {
     if (!isAdmin && questionnairePanel) loadApplicantQuestionnaireData(generation, user.uid);
   } catch (error) {
     if (generation === authGeneration) showAccess(`Could not open the homestead page: ${error.message || 'Please try again.'}`);
+  }
+});
+
+$('share-homestead').addEventListener('click', async () => {
+  if (!pagePublished) return;
+  const url = new URL(companyLink('homestead.html', companyId), location.href).href;
+  const title = $('homestead-name').textContent.trim();
+  if (navigator.share) {
+    try {
+      await navigator.share({ title, text: `Explore ${title} on Homesteader.`, url });
+      $('homestead-share-status').hidden = false;
+      status('homestead-share-status', 'Homestead page shared.');
+      return;
+    } catch (error) {
+      if (error.name === 'AbortError') return;
+    }
+  }
+  try {
+    await navigator.clipboard.writeText(url);
+    $('homestead-share-status').hidden = false;
+    status('homestead-share-status', 'Link copied. Paste it into any message or social media post.');
+  } catch {
+    $('homestead-share-status').hidden = false;
+    status('homestead-share-status', `Copy this link: ${url}`);
   }
 });
 

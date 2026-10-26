@@ -19,6 +19,7 @@ const scopedDoc = (...parts) => doc(db, ...companySegments(companyId, ...parts))
 const scopedCollection = (...parts) => collection(db, ...companySegments(companyId, ...parts));
 const functions = getFunctions(app, 'us-west2');
 const savePage = httpsCallable(functions, 'saveHomesteadPage');
+const saveCompanyProfile = httpsCallable(functions, 'saveCompanyProfile');
 const addPhoto = httpsCallable(functions, 'addHomesteadPhoto');
 const deletePhoto = httpsCallable(functions, 'deleteHomesteadPhoto');
 const saveQuestionnaire = httpsCallable(functions, 'saveQuestionnaire');
@@ -338,12 +339,15 @@ $('homestead-form').addEventListener('submit', async event => {
   const button = $('save-homestead');
   button.disabled = true;
   try {
+    const name = $('edit-homestead-name').value.trim();
+    // A published company page must have a listing before applicants can find it.
+    if (companyId !== 'titan') await saveCompanyProfile({ name });
     await savePage({
-      name: $('edit-homestead-name').value.trim(),
+      name,
       description: $('edit-homestead-description').value.trim(),
       fields: topics.map(topic => ({ label: topic.label.trim(), value: topic.value.trim() }))
     });
-    status('save-page-message', 'Homestead page saved.');
+    status('save-page-message', 'Homestead page saved and available in Find a homestead.');
   } catch (error) {
     status('save-page-message', error.message || 'Could not save the homestead page.', true);
   } finally {

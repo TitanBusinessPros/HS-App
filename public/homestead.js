@@ -4,9 +4,12 @@ import { getFirestore, doc, collection, getDoc, onSnapshot } from 'https://www.g
 import { initializeAppCheck, ReCaptchaEnterpriseProvider } from 'https://www.gstatic.com/firebasejs/13.1.0/firebase-app-check.js';
 import { getFunctions, httpsCallable } from 'https://www.gstatic.com/firebasejs/13.1.0/firebase-functions.js';
 import { firebaseConfig, appCheckSiteKey } from './firebase-config.js';
-import { requestedCompany, companySegments, companyLink } from './company-context.js';
+import { questions } from './questions.js';
+import { requestedCompany, companySegments, companyLink, questionnaireAvailable } from './company-context.js';
+import { readQuestionnaireAnswers, renderQuestionnaireQuestions } from './questionnaire-form.js';
 
 const $ = id => document.getElementById(id);
+const questionnairePanel = $('homestead-questionnaire');
 const app = initializeApp(firebaseConfig);
 initializeAppCheck(app, { provider: new ReCaptchaEnterpriseProvider(appCheckSiteKey), isTokenAutoRefreshEnabled: true });
 const auth = getAuth(app);
@@ -18,6 +21,7 @@ const functions = getFunctions(app, 'us-west2');
 const savePage = httpsCallable(functions, 'saveHomesteadPage');
 const addPhoto = httpsCallable(functions, 'addHomesteadPhoto');
 const deletePhoto = httpsCallable(functions, 'deleteHomesteadPhoto');
+const saveQuestionnaire = httpsCallable(functions, 'saveQuestionnaire');
 const suggestedTopics = [
   'Location area', 'Acreage', 'Number of structures', 'Rent or work trade for structures',
   'Current residents', 'Maximum residents'
@@ -26,10 +30,18 @@ let isAdmin = false;
 let isMasterAdmin = false;
 let pageUnsub = null;
 let photosUnsub = null;
+let questionnaireConfigUnsub = null;
 let authGeneration = 0;
 let editorInitialized = false;
 let topics = [];
 let photos = [];
+let pagePublished = false;
+let questionnaireConfigLoaded = false;
+let questionnaireConfig = null;
+let questionnaireQuestions = questions;
+let questionnaireRevision = 0;
+let savedQuestionnaire = null;
+let applicantProfileExists = false;
 
 function status(id, message, error = false) {
   $(id).textContent = message;
@@ -41,6 +53,62 @@ function showAccess(message) {
   $('page-view').hidden = true;
   $('access-text').textContent = message;
   $('access-message').hidden = false;
+}
+
+function questionnaireAnswers() {
+  return readQuestionnaireAnswers($('homestead-questionnaire-form'), questionnaireQuestions);
+}
+
+function updateQuestionnaireProgress() {
+  const answered = questionnaireAnswers().filter(answer => answer !== null).length;
+  $('homestead-questionnaire-progress').textContent = `${answered} of ${questionnaireQuestions.length} answered`;
+}
+
+function updateQuestionnaireVisibility() {
+  if (!questionnairePanel) return;
+  questionnairePanel.hidden = isAdmin || !pagePublished || !questionnaireConfigLoaded ||
+    !questionnaireAvailable(companyId, questionnaireConfig);
+}
+
+function renderApplicantQuestionnaire(savedAnswers = []) {
+  renderQuestionnaireQuestions($('homestead-questions-list'), questionnaireQuestions,
+    savedAnswers, updateQuestionnaireProgress);
+  $('homestead-questionnaire-profile-note').hidden = applicantProfileExists;
+  $('homestead-save-questionnaire').disabled = !applicantProfileExists;
+}
+
+function matchingSavedAnswers() {
+  const legacyMatch = savedQuestionnaire?.version === 1 &&
+    JSON.stringify(questionnaireQuestions) === JSON.stringify(questions);
+  return (savedQuestionnaire?.version === 2 &&
+    savedQuestionnaire.revision === questionnaireRevision) || legacyMatch ?
+    savedQuestionnaire.answers : [];
+}
+
+async function loadApplicantQuestionnaireData(generation, uid) {
+  try {
+    const profileExists = (await getDoc(doc(db, 'users', uid))).exists();
+    let saved = null;
+    if (profileExists) {
+      try {
+        const snapshot = await getDoc(scopedDoc('questionnaires', uid));
+        saved = snapshot.exists() ? snapshot.data() : null;
+      } catch (error) {
+        if (error.code !== 'permission-denied') throw error;
+      }
+    }
+    if (generation !== authGeneration) return;
+    applicantProfileExists = profileExists;
+    savedQuestionnaire = saved;
+    if (questionnaireConfigLoaded && questionnaireAvailable(companyId, questionnaireConfig)) {
+      const pendingAnswers = questionnaireAnswers();
+      renderApplicantQuestionnaire(pendingAnswers.some(answer => answer !== null) ?
+        pendingAnswers : matchingSavedAnswers());
+    }
+  } catch (error) {
+    if (generation === authGeneration) status('page-message',
+      `The homestead page opened, but your questionnaire details could not load: ${error.message || 'Please reload.'}`, true);
+  }
 }
 
 function wordCount() {
@@ -83,6 +151,8 @@ function renderTopics() {
 
 function renderPage(data) {
   const published = data?.published === true;
+  pagePublished = published;
+  updateQuestionnaireVisibility();
   $('homestead-empty').hidden = published;
   $('homestead-content').hidden = !published && !isAdmin;
   $('homestead-about-section').hidden = !published;
@@ -158,11 +228,24 @@ onAuthStateChanged(auth, async user => {
   const generation = ++authGeneration;
   if (pageUnsub) pageUnsub();
   if (photosUnsub) photosUnsub();
-  pageUnsub = photosUnsub = null;
+  if (questionnaireConfigUnsub) questionnaireConfigUnsub();
+  pageUnsub = photosUnsub = questionnaireConfigUnsub = null;
   editorInitialized = false;
   isAdmin = false;
   isMasterAdmin = false;
   photos = [];
+  pagePublished = false;
+  questionnaireConfigLoaded = false;
+  questionnaireConfig = null;
+  questionnaireQuestions = questions;
+  questionnaireRevision = 0;
+  savedQuestionnaire = null;
+  applicantProfileExists = false;
+  if (questionnairePanel) {
+    questionnairePanel.hidden = true;
+    questionnairePanel.open = false;
+    $('homestead-questions-list').replaceChildren();
+  }
   renderPhotos();
   $('account-email').textContent = user?.email || '';
   $('sign-out').hidden = !user;
@@ -178,6 +261,7 @@ onAuthStateChanged(auth, async user => {
       user.email?.toLowerCase() === 'titanbusinesspros@gmail.com' : adminRecord.data().role === 'owner');
     document.querySelectorAll('a[href="./"]').forEach(link => { link.href = companyLink('./', companyId); });
     if (generation !== authGeneration) return;
+    if (questionnairePanel) $('homestead-questionnaire-profile-link').href = companyLink('./', companyId);
     $('admin-editor').hidden = !isMasterAdmin;
     $('loading').hidden = true;
     $('access-message').hidden = true;
@@ -194,8 +278,48 @@ onAuthStateChanged(auth, async user => {
         renderPhotos();
       }
     }, error => status('page-message', error.message || 'Could not load homestead details.', true));
+    if (!isAdmin && questionnairePanel) questionnaireConfigUnsub = onSnapshot(scopedDoc('questionnaireConfig', 'main'), snapshot => {
+      if (generation !== authGeneration) return;
+      const previousRevision = questionnaireRevision;
+      const pendingAnswers = questionnaireAnswers();
+      questionnaireConfig = snapshot.data() || null;
+      questionnaireConfigLoaded = true;
+      questionnaireQuestions = questionnaireConfig?.questions || questions;
+      questionnaireRevision = questionnaireConfig?.questionRevision || 0;
+      if (questionnaireAvailable(companyId, questionnaireConfig)) {
+        const savedAnswers = matchingSavedAnswers();
+        renderApplicantQuestionnaire(previousRevision === questionnaireRevision &&
+          pendingAnswers.some(answer => answer !== null) ? pendingAnswers : savedAnswers);
+      }
+      updateQuestionnaireVisibility();
+    }, error => status('page-message', error.message || 'Could not load questionnaire.', true));
+    if (!isAdmin && questionnairePanel) loadApplicantQuestionnaireData(generation, user.uid);
   } catch (error) {
     if (generation === authGeneration) showAccess(`Could not open the homestead page: ${error.message || 'Please try again.'}`);
+  }
+});
+
+questionnairePanel?.querySelector('form')?.addEventListener('submit', async event => {
+  event.preventDefault();
+  if (isAdmin || !applicantProfileExists || !pagePublished ||
+      !questionnaireAvailable(companyId, questionnaireConfig)) return;
+  const answers = questionnaireAnswers();
+  if (answers.some(answer => answer === null)) {
+    return status('homestead-questionnaire-message',
+      `Please answer all ${questionnaireQuestions.length} questions before saving.`, true);
+  }
+  const button = $('homestead-save-questionnaire');
+  button.disabled = true;
+  status('homestead-questionnaire-message', 'Saving your answers...');
+  try {
+    const revision = questionnaireRevision;
+    await saveQuestionnaire({ answers, revision, companyId });
+    savedQuestionnaire = { version: questionnaireConfig ? 2 : 1, revision, answers };
+    status('homestead-questionnaire-message', 'Your answers were saved for this homestead to review.');
+  } catch (error) {
+    status('homestead-questionnaire-message', error.message || 'Could not save your answers.', true);
+  } finally {
+    button.disabled = false;
   }
 });
 

@@ -20,7 +20,7 @@
   </header>
   <p id="pwa-status" class="pwa-status" role="status" hidden></p>
   <main class="homestead-page">
-    <section id="loading" class="state-card"><h1>Opening the homestead...</h1></section>
+    <section id="loading" class="state-card"><h1>Opening the homestead...</h1><p id="startup-help" hidden>This page is taking too long to open. Check your connection, then reload.</p><button id="startup-reload" class="primary-button" type="button" hidden>Reload homestead page</button></section>
     <section id="access-message" class="state-card" hidden><h1>Sign in to continue</h1><p id="access-text">Sign in with Google to see the homestead.</p><a class="primary-button button-link" href="./">Go to Homesteader</a></section>
     <section id="page-view" hidden>
       <div class="page-intro"><span class="eyebrow">Meet the place</span><h1 id="homestead-name">About the homestead</h1><a class="text-button" href="./">Back to Homesteader</a></div>
@@ -30,6 +30,17 @@
         <section id="homestead-about-section" class="card homestead-section"><h2>About this homestead</h2><p id="homestead-description" class="homestead-description"></p></section>
         <section id="homestead-details-section" class="card homestead-section"><h2>Homestead details</h2><div id="homestead-details" class="homestead-details"></div></section>
         <section class="card homestead-section"><div class="section-heading"><h2>Photos of the homestead</h2><span id="homestead-photo-count" class="count">0</span></div><div id="homestead-gallery" class="homestead-gallery"></div><p id="homestead-no-photos" class="muted">Photos will appear here when the team adds them.</p></section>
+        <details id="homestead-questionnaire" class="card homestead-section homestead-questionnaire" hidden>
+          <summary>View and complete this homestead's questionnaire</summary>
+          <p class="muted">Your answers go only to this homestead's admins. You can return to update them.</p>
+          <p id="homestead-questionnaire-profile-note" class="field-help" hidden>Save your applicant introduction before submitting. <a id="homestead-questionnaire-profile-link" href="./">Go to your profile</a></p>
+          <form id="homestead-questionnaire-form">
+            <p id="homestead-questionnaire-progress" class="field-count"></p>
+            <div id="homestead-questions-list"></div>
+            <button id="homestead-save-questionnaire" class="primary-button" type="submit">Save answers</button>
+            <p id="homestead-questionnaire-message" class="message" role="status"></p>
+          </form>
+        </details>
       </div>
       <section id="admin-editor" class="card homestead-section" hidden>
         <span class="eyebrow">Company owner editor</span><h2>Edit the homestead page</h2>
@@ -65,6 +76,27 @@
     </div>
   </footer>
   <script src="pwa.js" defer></script>
+  <script>
+    (() => {
+      const loading = document.getElementById('loading');
+      const help = document.getElementById('startup-help');
+      const reload = document.getElementById('startup-reload');
+      reload.addEventListener('click', () => {
+        const url = new URL(location.href);
+        url.searchParams.set('reload', Date.now().toString());
+        location.replace(url.href);
+      });
+      const revealHelp = () => {
+        if (!loading.hidden) {
+          help.hidden = false;
+          reload.hidden = false;
+        }
+      };
+      window.addEventListener('error', revealHelp);
+      window.addEventListener('unhandledrejection', revealHelp);
+      setTimeout(revealHelp, 12000);
+    })();
+  </script>
   <script type="module" src="homestead.js"></script>
 </body>
 </html>

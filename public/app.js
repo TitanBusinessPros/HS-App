@@ -1,6 +1,6 @@
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/13.1.0/firebase-app.js';
 import { getAuth, onAuthStateChanged, GoogleAuthProvider, signInWithPopup, signOut } from 'https://www.gstatic.com/firebasejs/13.1.0/firebase-auth.js';
-import { getFirestore, doc, collection, getDoc, getDocs, onSnapshot, query, orderBy } from 'https://www.gstatic.com/firebasejs/13.1.0/firebase-firestore.js';
+import { getFirestore, doc, collection, getDoc, getDocs, onSnapshot, query, orderBy, limit } from 'https://www.gstatic.com/firebasejs/13.1.0/firebase-firestore.js';
 import { initializeAppCheck, ReCaptchaEnterpriseProvider } from 'https://www.gstatic.com/firebasejs/13.1.0/firebase-app-check.js';
 import { getFunctions, httpsCallable } from 'https://www.gstatic.com/firebasejs/13.1.0/firebase-functions.js';
 import { firebaseConfig, appCheckSiteKey } from './firebase-config.js';
@@ -64,6 +64,9 @@ function start() {
   let memberSkillCatalog = buildSkillCatalog();
   let rosterTeamsUnsub = null;
   let rosterSummariesUnsub = null;
+  let questionnaireAlertsUnsub = null;
+  let questionnaireAlertTimes = new Map();
+  let questionnaireAlertsReady = false;
   let rosterMemberUnsubs = new Map();
   let rosterTeams = [];
   let rosterMembers = new Map();
@@ -186,9 +189,16 @@ function start() {
     if (!panel.hidden) loadHomesteads(loadId);
   });
   function cleanSubscriptions() {
-    for (const unsub of [memberConversationUnsub, profileUnsub, applicationUnsub, questionnaireUnsub, questionnaireConfigUnsub, skillsUnsub, skillCatalogUnsub, rosterTeamsUnsub, rosterSummariesUnsub]) if (unsub) unsub();
+    for (const unsub of [memberConversationUnsub, profileUnsub, applicationUnsub, questionnaireUnsub, questionnaireConfigUnsub, skillsUnsub, skillCatalogUnsub, rosterTeamsUnsub, rosterSummariesUnsub, questionnaireAlertsUnsub]) if (unsub) unsub();
     for (const unsub of rosterMemberUnsubs.values()) unsub();
-    memberConversationUnsub = profileUnsub = applicationUnsub = questionnaireUnsub = questionnaireConfigUnsub = skillsUnsub = skillCatalogUnsub = rosterTeamsUnsub = rosterSummariesUnsub = null;
+    memberConversationUnsub = profileUnsub = applicationUnsub = questionnaireUnsub = questionnaireConfigUnsub = skillsUnsub = skillCatalogUnsub = rosterTeamsUnsub = rosterSummariesUnsub = questionnaireAlertsUnsub = null;
+    questionnaireAlertTimes = new Map();
+    questionnaireAlertsReady = false;
+    const alertList = $('questionnaire-alerts-list');
+    if (alertList) {
+      alertList.replaceChildren();
+      status('questionnaire-alerts-status', 'Loading submissions...');
+    }
     memberSkillEntries = [];
     memberSkillCatalog = buildSkillCatalog();
     rosterMemberUnsubs = new Map();
@@ -201,6 +211,39 @@ function start() {
     rosterError = '';
     $('admin-team-grid').replaceChildren();
     status('admin-roster-status', 'Loading teams...');
+  }
+  function watchQuestionnaireAlerts(generation) {
+    if (!$('questionnaire-alerts-list')) return;
+    questionnaireAlertsUnsub = onSnapshot(query(scopedCollection('applicantSummaries'),
+      orderBy('questionnaireCompletedAt', 'desc'), limit(10)), snapshot => {
+      if (generation !== authGeneration) return;
+      const submissions = snapshot.docs.map(item => ({ uid: item.id, ...item.data() }))
+        .filter(item => item.questionnaireCompletedAt?.toMillis);
+      const fresh = questionnaireAlertsReady ? submissions.find(item =>
+        item.questionnaireCompletedAt.toMillis() > (questionnaireAlertTimes.get(item.uid) || 0)) : null;
+      questionnaireAlertTimes = new Map(submissions.map(item => [item.uid, item.questionnaireCompletedAt.toMillis()]));
+      questionnaireAlertsReady = true;
+      status('questionnaire-alerts-status', fresh ?
+        `New questionnaire from ${fresh.name || 'an applicant'}.` :
+        submissions.length ? `Showing the latest ${submissions.length} questionnaire ${submissions.length === 1 ? 'submission' : 'submissions'}.` :
+        'No questionnaires submitted yet.');
+      const list = $('questionnaire-alerts-list');
+      list.replaceChildren();
+      for (const person of submissions) {
+        const link = document.createElement('a');
+        link.className = 'questionnaire-alert-item';
+        const url = new URL(companyLink('profiles.html', companyId), location.href);
+        url.searchParams.set('applicant', person.uid);
+        link.href = url.toString();
+        const name = document.createElement('strong');
+        name.textContent = person.name || 'Unnamed applicant';
+        const submitted = document.createElement('span');
+        submitted.textContent = `Submitted ${person.questionnaireCompletedAt.toDate().toLocaleString()}`;
+        link.append(name, submitted);
+        list.append(link);
+      }
+    }, error => status('questionnaire-alerts-status',
+      `Could not load questionnaire submissions: ${readableError(error)}`, true));
   }
   function renderAdminRoster() {
     const grid = $('admin-team-grid');
@@ -485,6 +528,7 @@ function start() {
         if (isMasterAdmin) loadCompanies();
         showView('admin-view');
         watchAdminRoster(generation);
+        watchQuestionnaireAlerts(generation);
       } else {
         companyId = requestedCompany();
         if (generation !== authGeneration) return;

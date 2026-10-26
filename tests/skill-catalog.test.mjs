@@ -15,3 +15,12 @@ test('deleted built-in and custom skills leave the active catalog', () => {
   assert.equal(catalog.byId.get(activeId)?.name, 'Active Skill');
   assert.equal(catalog.skills.length, skills.length);
 });
+
+test('a new category is available before it contains a skill', () => {
+  const catalog = buildSkillCatalog([
+    { id: 'category_0123456789abcdef0123456789abcdef', category: 'Woodworking', categoryOnly: true }
+  ]);
+  assert.ok(catalog.categories.includes('Woodworking'));
+  assert.equal(catalog.skills.length, skills.length);
+  assert.equal(catalog.byId.has('category_0123456789abcdef0123456789abcdef'), false);
+});

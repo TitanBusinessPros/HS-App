@@ -295,7 +295,8 @@ export const getCompanyAccountOverview = onCall({ ...options, timeoutSeconds: 12
     questionnaire: { enabled: settings.enabled !== false, revision: settings.revision || 0,
       questions: settings.questions || null },
     catalog: catalog.docs.map(document => ({ id: document.id, name: document.data().name || '',
-      category: document.data().category || '', deleted: document.data().deleted === true })),
+      category: document.data().category || '', categoryOnly: document.data().categoryOnly === true,
+      deleted: document.data().deleted === true })),
     homestead: { name: homestead.name || '', description: homestead.description || '',
       fields: homestead.fields || [], published: homestead.published === true,
       photos: photos.docs.map(document => ({ id: document.id, photo: document.data().photo || '' })) },
@@ -1220,13 +1221,18 @@ export const manageInterview = onCall(options, async request => {
 export const addSkill = onCall(options, async request => {
   const user = caller(request);
   await assertMasterAdmin(user);
+  const categoryOnly = request.data?.categoryOnly === true;
   const name = typeof request.data?.name === 'string' ? request.data.name.trim().replace(/\s+/g, ' ') : '';
   const category = typeof request.data?.category === 'string' ? request.data.category.trim().replace(/\s+/g, ' ') : '';
-  if (name.length < 2 || name.length > 80 || category.length < 2 || category.length > 50 ||
-      /[\/\\]/.test(name + category)) invalid('Enter a skill and a category.');
-  await checkText(`${category}\n${name}`);
-  const key = `${category.toLocaleLowerCase('en-US')}|${name.toLocaleLowerCase('en-US')}`;
-  const id = `custom_${createHash('sha256').update(key).digest('hex').slice(0, 32)}`;
+  if (category.length < 2 || category.length > 50 || /[\/\\]/.test(category) ||
+      (!categoryOnly && (name.length < 2 || name.length > 80 || /[\/\\]/.test(name)))) {
+    invalid(categoryOnly ? 'Enter a category up to 50 characters.' : 'Enter a skill and a category.');
+  }
+  await checkText(categoryOnly ? category : `${category}\n${name}`);
+  const key = categoryOnly ? category.toLocaleLowerCase('en-US') :
+    `${category.toLocaleLowerCase('en-US')}|${name.toLocaleLowerCase('en-US')}`;
+  const id = `${categoryOnly ? 'category' : 'custom'}_${createHash('sha256').update(key).digest('hex').slice(0, 32)}`;
+  const duplicateMessage = categoryOnly ? 'This category already exists.' : 'This skill is already in that category.';
   try {
     await db.runTransaction(async transaction => {
       await assertActive(transaction, user.uid);
@@ -1235,16 +1241,17 @@ export const addSkill = onCall(options, async request => {
         throw new HttpsError('permission-denied', 'Platform owner access required.');
       }
       const skill = companyDoc(primaryCompanyId, `skillCatalog/${id}`);
-      if ((await transaction.get(skill)).exists) throw new HttpsError('already-exists', 'This skill is already in that category.');
-      transaction.create(skill, { name, category, addedBy: user.uid, addedAt: FieldValue.serverTimestamp() });
+      if ((await transaction.get(skill)).exists) throw new HttpsError('already-exists', duplicateMessage);
+      transaction.create(skill, { ...(categoryOnly ? { categoryOnly: true } : { name }),
+        category, addedBy: user.uid, addedAt: FieldValue.serverTimestamp() });
     });
   } catch (error) {
     if (error.code === 6 || error.code === 'already-exists') {
-      throw new HttpsError('already-exists', 'This skill is already in that category.');
+      throw new HttpsError('already-exists', duplicateMessage);
     }
     throw error;
   }
-  return { id };
+  return { id, categoryOnly };
 });
 
 export const deleteSkill = onCall(options, async request => {

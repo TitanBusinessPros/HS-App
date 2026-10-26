@@ -1407,6 +1407,27 @@ $('cancel-interview').addEventListener('click', async () => {
   }
 });
 
+$('add-category-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  if (!canAddSkills) return status('add-category-message', 'Platform owner access required.', true);
+  const category = $('new-category-name').value.trim();
+  if (catalog.categories.some(name => name.toLowerCase() === category.toLowerCase())) {
+    return status('add-category-message', 'This category already exists.', true);
+  }
+  const button = $('add-category');
+  button.disabled = true;
+  try {
+    await addSkill({ categoryOnly: true, category });
+    $('new-category-name').value = '';
+    $('new-skill-category').value = category;
+    status('add-category-message', `${category} added. You can now add a skill to it.`);
+  } catch (error) {
+    status('add-category-message', error.message || 'Could not add category.', true);
+  } finally {
+    button.disabled = false;
+  }
+});
+
 $('add-skill-form').addEventListener('submit', async event => {
   event.preventDefault();
   if (!canAddSkills) return status('add-skill-message', 'Platform owner access required.', true);

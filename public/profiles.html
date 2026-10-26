@@ -103,6 +103,13 @@
         </form>
       </details>
       <section id="add-skill-card" class="card skill-ranking-card" hidden>
+        <h2>Add a skill category</h2>
+        <p class="muted">Create a category before adding skills to it.</p>
+        <form id="add-category-form">
+          <label for="new-category-name">Category name</label><input id="new-category-name" maxlength="50" required placeholder="For example, Woodworking">
+          <button id="add-category" class="primary-button" type="submit">Add category</button>
+          <p id="add-category-message" class="message" role="status"></p>
+        </form>
         <h2>Add a homestead skill</h2>
         <p class="muted">New skills appear in the applicant skill picker and the admin rankings.</p>
         <form id="add-skill-form">

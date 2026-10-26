@@ -54,13 +54,14 @@ export function buildSkillCatalog(customSkills = []) {
   const sorted = customSkills.filter(skill => skill.deleted !== true).sort((a, b) =>
     String(a.category).localeCompare(String(b.category)) || String(a.name).localeCompare(String(b.name)));
   for (const skill of sorted) {
-    if (typeof skill.id !== 'string' || typeof skill.name !== 'string' || typeof skill.category !== 'string') continue;
+    if (typeof skill.id !== 'string' || typeof skill.category !== 'string' ||
+        (skill.categoryOnly !== true && typeof skill.name !== 'string')) continue;
     const key = skill.category.toLowerCase();
     if (!byCategory.has(key)) {
       byCategory.set(key, skill.category);
       categories.push(skill.category);
     }
-    all.push({ ...skill, category: byCategory.get(key) });
+    if (skill.categoryOnly !== true) all.push({ ...skill, category: byCategory.get(key) });
   }
   const byId = new Map(all.map(skill => [String(skill.id), skill]));
   return { skills: all, categories, byId };

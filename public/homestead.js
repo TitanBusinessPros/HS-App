@@ -229,13 +229,19 @@ function watchPhotos(generation) {
 }
 
 function openPage(generation, publicVisitor = false) {
-  $('loading').hidden = true;
+  $('loading').hidden = false;
   $('access-message').hidden = true;
-  $('page-view').hidden = false;
+  $('page-view').hidden = true;
   pageUnsub = onSnapshot(scopedDoc('homesteadPage', 'main'), snapshot => {
     if (generation !== authGeneration) return;
     const data = snapshot.exists() ? snapshot.data() : null;
+    if (publicVisitor && data?.published !== true) {
+      showAccess('This homestead page is not published or is unavailable.', 'Homestead page unavailable');
+      return;
+    }
     renderPage(data);
+    $('loading').hidden = true;
+    $('page-view').hidden = false;
     if (isAdmin || data?.published === true) watchPhotos(generation);
     else if (photosUnsub) {
       photosUnsub();
@@ -246,8 +252,14 @@ function openPage(generation, publicVisitor = false) {
   }, error => {
     if (generation !== authGeneration) return;
     if (publicVisitor && error.code === 'permission-denied') {
-      showAccess('This homestead page is not published or is unavailable.', 'Homestead page unavailable');
-    } else status('page-message', error.message || 'Could not load homestead details.', true);
+      showAccess('This homestead page is unavailable. It may be unpublished, or there may be a connection problem.', 'Homestead page unavailable');
+    } else if (publicVisitor) {
+      showAccess('Could not load this homestead page. Check your connection and try again.', 'Homestead page unavailable');
+    } else {
+      $('loading').hidden = true;
+      $('page-view').hidden = false;
+      status('page-message', error.message || 'Could not load homestead details.', true);
+    }
   });
 }
 
@@ -293,8 +305,12 @@ onAuthStateChanged(auth, async user => {
     if (token.claims.firebase?.sign_in_provider !== 'google.com') return showAccess('Sign in with Google to continue.');
     if ((await getDoc(doc(db, 'blockedUsers', user.uid))).exists()) return showAccess('This account cannot use Homesteader.');
     const adminRecord = await getDoc(doc(db, 'admins', user.uid));
-    isAdmin = adminRecord.exists();
-    if (isAdmin) companyId = adminRecord.data().companyId || 'titan';
+    const accountIsAdmin = adminRecord.exists();
+    const adminCompanyId = accountIsAdmin ? adminRecord.data().companyId || 'titan' : null;
+    const visitingOtherCompany = accountIsAdmin && new URLSearchParams(location.search).has('company') &&
+      companyId !== adminCompanyId;
+    isAdmin = accountIsAdmin && !visitingOtherCompany;
+    if (isAdmin) companyId = adminCompanyId;
     isMasterAdmin = isAdmin && (companyId === 'titan' ?
       user.email?.toLowerCase() === 'titanbusinesspros@gmail.com' : adminRecord.data().role === 'owner');
     document.querySelectorAll('a[href="./"], a[href^="./?company="]').forEach(link => {
@@ -304,8 +320,8 @@ onAuthStateChanged(auth, async user => {
     if (questionnairePanel) $('homestead-questionnaire-profile-link').href = companyLink('./', companyId);
     $('homestead-sign-in-link').href = companyLink('./', companyId);
     $('admin-editor').hidden = !isMasterAdmin;
-    openPage(generation);
-    if (!isAdmin && questionnairePanel) questionnaireConfigUnsub = onSnapshot(scopedDoc('questionnaireConfig', 'main'), snapshot => {
+    openPage(generation, !isAdmin);
+    if (!accountIsAdmin && questionnairePanel) questionnaireConfigUnsub = onSnapshot(scopedDoc('questionnaireConfig', 'main'), snapshot => {
       if (generation !== authGeneration) return;
       const previousRevision = questionnaireRevision;
       const pendingAnswers = questionnaireAnswers();
@@ -320,7 +336,7 @@ onAuthStateChanged(auth, async user => {
       }
       updateQuestionnaireVisibility();
     }, error => status('page-message', error.message || 'Could not load questionnaire.', true));
-    if (!isAdmin && questionnairePanel) loadApplicantQuestionnaireData(generation, user.uid);
+    if (!accountIsAdmin && questionnairePanel) loadApplicantQuestionnaireData(generation, user.uid);
   } catch (error) {
     if (generation === authGeneration) showAccess(`Could not open the homestead page: ${error.message || 'Please try again.'}`);
   }

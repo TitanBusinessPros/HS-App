@@ -1219,7 +1219,7 @@ export const manageInterview = onCall(options, async request => {
 
 export const addSkill = onCall(options, async request => {
   const user = caller(request);
-  const companyId = await companyOwner(user);
+  await assertMasterAdmin(user);
   const name = typeof request.data?.name === 'string' ? request.data.name.trim().replace(/\s+/g, ' ') : '';
   const category = typeof request.data?.category === 'string' ? request.data.category.trim().replace(/\s+/g, ' ') : '';
   if (name.length < 2 || name.length > 80 || category.length < 2 || category.length > 50 ||
@@ -1231,11 +1231,10 @@ export const addSkill = onCall(options, async request => {
     await db.runTransaction(async transaction => {
       await assertActive(transaction, user.uid);
       const admin = await transaction.get(db.doc(`admins/${user.uid}`));
-      if (!admin.exists || companyIdOf(admin) !== companyId ||
-          (companyId === primaryCompanyId ? !hasMasterEmail(user) : admin.data().role !== 'owner')) {
-        throw new HttpsError('permission-denied', 'Company owner access required.');
+      if (!admin.exists || companyIdOf(admin) !== primaryCompanyId || !hasMasterEmail(user)) {
+        throw new HttpsError('permission-denied', 'Platform owner access required.');
       }
-      const skill = companyDoc(companyId, `skillCatalog/${id}`);
+      const skill = companyDoc(primaryCompanyId, `skillCatalog/${id}`);
       if ((await transaction.get(skill)).exists) throw new HttpsError('already-exists', 'This skill is already in that category.');
       transaction.create(skill, { name, category, addedBy: user.uid, addedAt: FieldValue.serverTimestamp() });
     });
@@ -1250,16 +1249,18 @@ export const addSkill = onCall(options, async request => {
 
 export const deleteSkill = onCall(options, async request => {
   const user = caller(request);
-  const { companyId } = await companyAdmin(user);
+  await assertMasterAdmin(user);
   const id = request.data?.id;
   if (!validSkillId(id)) invalid('Choose a skill to delete.');
   await db.runTransaction(async transaction => {
     await assertActive(transaction, user.uid);
-    const skillRef = companyDoc(companyId, `skillCatalog/${id}`);
+    const skillRef = companyDoc(primaryCompanyId, `skillCatalog/${id}`);
     const [admin, skill] = await Promise.all([
       transaction.get(db.doc(`admins/${user.uid}`)), transaction.get(skillRef)
     ]);
-    if (!admin.exists || companyIdOf(admin) !== companyId) throw new HttpsError('permission-denied', 'Admin access required.');
+    if (!admin.exists || companyIdOf(admin) !== primaryCompanyId || !hasMasterEmail(user)) {
+      throw new HttpsError('permission-denied', 'Platform owner access required.');
+    }
     if ((typeof id === 'string' && !skill.exists) || skill.data()?.deleted === true) {
       throw new HttpsError('not-found', 'This skill is no longer available.');
     }

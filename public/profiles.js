@@ -44,6 +44,7 @@ const pageSize = 25;
 const nameCollator = new Intl.Collator(undefined, { sensitivity: 'base' });
 let currentUser = null;
 let isMasterAdmin = false;
+let canAddSkills = false;
 let companyId = 'titan';
 const scopedDoc = (...parts) => doc(db, ...companySegments(companyId, ...parts));
 const scopedCollection = (...parts) => collection(db, ...companySegments(companyId, ...parts));
@@ -1051,6 +1052,7 @@ onAuthStateChanged(auth, async user => {
   linkedApplicantOpened = false;
   linkedApplicantScrolled = false;
   isMasterAdmin = false;
+  canAddSkills = false;
   calendarReady = false;
   calendarInterviewSignature = null;
   $('admin-management').hidden = true;
@@ -1097,13 +1099,14 @@ onAuthStateChanged(auth, async user => {
     companyId = adminRecord.data().companyId || 'titan';
     $('delete-applicant').textContent = companyId === 'titan' ? 'Delete profile and block account' : 'Delete company records and block';
     isMasterAdmin = companyId === 'titan' ? user.email?.toLowerCase() === masterAdminEmail : adminRecord.data().role === 'owner';
+    canAddSkills = companyId === 'titan' && isMasterAdmin;
     $('profiles-company-name').textContent = companyId === 'titan' ? 'Titan Business Pros' :
       (await timed(getDoc(doc(db, 'companies', companyId)), 'Loading company')).data()?.name || 'Homestead company';
     document.querySelectorAll('a[href="./"]').forEach(link => { link.href = companyLink('./', companyId); });
     $('admin-management').hidden = !isMasterAdmin;
     $('questionnaire-editor').hidden = !isMasterAdmin;
-    $('add-skill-card').hidden = !isMasterAdmin;
-    $('delete-skill-card').hidden = false;
+    $('add-skill-card').hidden = !canAddSkills;
+    $('delete-skill-card').hidden = !canAddSkills;
     if (isMasterAdmin) loadAdmins(generation);
     $('loading').hidden = true;
     $('access-message').hidden = true;
@@ -1406,7 +1409,7 @@ $('cancel-interview').addEventListener('click', async () => {
 
 $('add-skill-form').addEventListener('submit', async event => {
   event.preventDefault();
-  if (!isMasterAdmin) return status('add-skill-message', 'Company owner access required.', true);
+  if (!canAddSkills) return status('add-skill-message', 'Platform owner access required.', true);
   const button = $('add-skill');
   const name = $('new-skill-name').value.trim();
   const category = $('new-skill-category').value.trim();
@@ -1428,6 +1431,7 @@ $('add-skill-form').addEventListener('submit', async event => {
 });
 
 $('delete-skill-button').addEventListener('click', async () => {
+  if (!canAddSkills) return status('delete-skill-message', 'Platform owner access required.', true);
   const skill = catalog.byId.get($('delete-skill-select').value);
   if (!skill || !confirm(`Delete ${skill.name} from ${skill.category}? It will disappear from the applicant picker and active rankings. Past submissions will remain stored.`)) return;
   const button = $('delete-skill-button');

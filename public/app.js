@@ -5,7 +5,6 @@ import { initializeAppCheck, ReCaptchaEnterpriseProvider } from 'https://www.gst
 import { getFunctions, httpsCallable } from 'https://www.gstatic.com/firebasejs/13.1.0/firebase-functions.js';
 import { firebaseConfig, appCheckSiteKey } from './firebase-config.js';
 import { normalizeExternalUrl } from './links.js';
-import { questions } from './questions.js';
 import { buildSkillCatalog } from './skills.js';
 import { requestedCompany, companySegments, companyLink } from './company-context.js';
 
@@ -54,10 +53,6 @@ function start() {
   let memberConversationUnsub = null;
   let profileUnsub = null;
   let applicationUnsub = null;
-  let questionnaireUnsub = null;
-  let questionnaireConfigUnsub = null;
-  let questionnaireSaved = null;
-  let questionnaireSettings = null;
   let skillsUnsub = null;
   let skillCatalogUnsub = null;
   let memberSkillEntries = [];
@@ -189,9 +184,9 @@ function start() {
     if (!panel.hidden) loadHomesteads(loadId);
   });
   function cleanSubscriptions() {
-    for (const unsub of [memberConversationUnsub, profileUnsub, applicationUnsub, questionnaireUnsub, questionnaireConfigUnsub, skillsUnsub, skillCatalogUnsub, rosterTeamsUnsub, rosterSummariesUnsub, questionnaireAlertsUnsub]) if (unsub) unsub();
+    for (const unsub of [memberConversationUnsub, profileUnsub, applicationUnsub, skillsUnsub, skillCatalogUnsub, rosterTeamsUnsub, rosterSummariesUnsub, questionnaireAlertsUnsub]) if (unsub) unsub();
     for (const unsub of rosterMemberUnsubs.values()) unsub();
-    memberConversationUnsub = profileUnsub = applicationUnsub = questionnaireUnsub = questionnaireConfigUnsub = skillsUnsub = skillCatalogUnsub = rosterTeamsUnsub = rosterSummariesUnsub = questionnaireAlertsUnsub = null;
+    memberConversationUnsub = profileUnsub = applicationUnsub = skillsUnsub = skillCatalogUnsub = rosterTeamsUnsub = rosterSummariesUnsub = questionnaireAlertsUnsub = null;
     questionnaireAlertTimes = new Map();
     questionnaireAlertsReady = false;
     const alertList = $('questionnaire-alerts-list');
@@ -341,20 +336,6 @@ function start() {
       renderAdminRoster();
     });
   }
-  function updateQuestionnaireStatus() {
-    if (!questionnaireSaved) {
-      $('questionnaire-status').textContent = 'Not completed yet.';
-      return;
-    }
-    const currentQuestions = questionnaireSettings?.questions || questions;
-    const questionValues = value => JSON.stringify(value.map(question =>
-      [question.section, question.prompt, question.choices]));
-    const current = questionnaireSaved.version === 2 ?
-      questionnaireSaved.revision === (questionnaireSettings?.questionRevision || 0) :
-      questionnaireSaved.version === 1 && questionValues(currentQuestions) === questionValues(questions);
-    $('questionnaire-status').textContent = current ?
-      'Completed. You can update your answers.' : 'The questions changed. Please update your answers.';
-  }
   function updateSkillStatus() {
     const count = memberSkillEntries.filter(entry => memberSkillCatalog.byId.has(String(entry.id))).length;
     $('skills-status').textContent = count ? `${count} skills saved. You can update them.` : 'No skills added yet.';
@@ -469,8 +450,6 @@ function start() {
     cleanSubscriptions();
     currentUser = user;
     currentProfile = null;
-    questionnaireSaved = null;
-    questionnaireSettings = null;
     profileInitialized = false;
     pendingPhotos = null;
     shownBookingInvite = '';
@@ -532,7 +511,7 @@ function start() {
       } else {
         companyId = requestedCompany();
         if (generation !== authGeneration) return;
-        for (const link of document.querySelectorAll('#member-view a[href="questionnaire.html"], #member-view a[href="skills.html"], #member-view a[href="homestead.html"]')) {
+        for (const link of document.querySelectorAll('#member-view a[href="skills.html"], #member-view a[href="homestead.html"]')) {
           link.href = companyLink(link.getAttribute('href'), companyId);
         }
         showView('member-view');
@@ -542,15 +521,6 @@ function start() {
           if (generation === authGeneration) status('member-message-status', `Could not finish updating old contact details: ${readableError(error)}`, true);
         });
         watchProfile(user.uid);
-        questionnaireUnsub = onSnapshot(scopedDoc('questionnaires', user.uid), snapshot => {
-          questionnaireSaved = snapshot.exists() ? snapshot.data() : null;
-          updateQuestionnaireStatus();
-        }, error => status('profile-message', readableError(error), true));
-        questionnaireConfigUnsub = onSnapshot(scopedDoc('questionnaireConfig', 'main'), snapshot => {
-          questionnaireSettings = snapshot.data() || null;
-          $('questionnaire-section').hidden = questionnaireSettings?.enabled === false;
-          updateQuestionnaireStatus();
-        }, error => status('profile-message', readableError(error), true));
         skillsUnsub = onSnapshot(scopedDoc('skills', user.uid), snapshot => {
           memberSkillEntries = snapshot.exists() ? (snapshot.data().entries || []) : [];
           updateSkillStatus();

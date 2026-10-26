@@ -109,7 +109,15 @@
             <a class="secondary-button button-link" href="skills.html">Add your homestead skills</a>
             <p id="skills-status" class="field-help">No skills added yet.</p>
           </div>
-          <div class="questionnaire-link"><h2>About the homestead</h2><p class="muted">See the land, living arrangements, and other details shared by the homestead team.</p><a class="secondary-button button-link" href="homestead.html">View the homestead</a></div>
+          <div class="questionnaire-link">
+            <h2>Find a homestead</h2>
+            <p class="muted">Explore homesteads that have published a page.</p>
+            <button id="find-homesteads" class="secondary-button" type="button" aria-expanded="false" aria-controls="homestead-discovery">Find a homestead</button>
+            <div id="homestead-discovery" class="homestead-discovery" hidden>
+              <p id="homestead-discovery-status" class="message" role="status"></p>
+              <div id="homestead-discovery-list" class="homestead-discovery-list"></div>
+            </div>
+          </div>
         </div>
         <aside class="card inbox-card">
           <div class="inbox-heading"><span class="inbox-icon" aria-hidden="true">✉</span><div><span class="eyebrow">Private conversation</span><h2>Inbox</h2></div></div>

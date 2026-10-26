@@ -1,6 +1,6 @@
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/13.1.0/firebase-app.js';
 import { getAuth, onAuthStateChanged, GoogleAuthProvider, signInWithPopup, signOut } from 'https://www.gstatic.com/firebasejs/13.1.0/firebase-auth.js';
-import { getFirestore, doc, collection, getDoc, onSnapshot, query, orderBy } from 'https://www.gstatic.com/firebasejs/13.1.0/firebase-firestore.js';
+import { getFirestore, doc, collection, getDoc, getDocs, onSnapshot, query, orderBy } from 'https://www.gstatic.com/firebasejs/13.1.0/firebase-firestore.js';
 import { initializeAppCheck, ReCaptchaEnterpriseProvider } from 'https://www.gstatic.com/firebasejs/13.1.0/firebase-app-check.js';
 import { getFunctions, httpsCallable } from 'https://www.gstatic.com/firebasejs/13.1.0/firebase-functions.js';
 import { firebaseConfig, appCheckSiteKey } from './firebase-config.js';
@@ -73,6 +73,7 @@ function start() {
   let rosterTeamsReady = false;
   let rosterError = '';
   let authGeneration = 0;
+  let homesteadLoadId = 0;
   let shownBookingInvite = '';
   const rosterCollator = new Intl.Collator(undefined, { sensitivity: 'base' });
   const photoPreview = document.createElement('img');
@@ -121,6 +122,69 @@ function start() {
     $('initial-loading').hidden = true;
     document.body.classList.remove('app-loading');
   }
+  async function loadHomesteads(loadId) {
+    const list = $('homestead-discovery-list');
+    list.replaceChildren();
+    status('homestead-discovery-status', 'Loading homesteads...');
+    try {
+      const listings = await getDocs(collection(db, 'companyListings'));
+      const companies = [{ id: 'titan', companyName: 'Titan Business Pros' },
+        ...listings.docs.filter(item => item.id !== 'titan' && item.data().active !== false)
+          .map(item => ({ id: item.id, companyName: item.data().name || 'Homestead company' }))];
+      let failedPages = 0;
+      const pages = await Promise.all(companies.map(async company => {
+        try {
+          const snapshot = await getDoc(doc(db, ...companySegments(company.id, 'homesteadPage', 'main')));
+          const page = snapshot.data();
+          if (page?.published !== true) return null;
+          return {
+            id: company.id,
+            name: typeof page.name === 'string' && page.name.trim() ? page.name.trim() : company.companyName,
+            description: typeof page.description === 'string' ? page.description.slice(0, 180) : ''
+          };
+        } catch {
+          failedPages++;
+          return null;
+        }
+      }));
+      if (loadId !== homesteadLoadId || !currentUser) return;
+      const available = pages.filter(Boolean).sort((a, b) => rosterCollator.compare(a.name, b.name));
+      for (const company of available) {
+        const card = document.createElement('article');
+        card.className = 'homestead-discovery-card';
+        const heading = document.createElement('h3');
+        const link = document.createElement('a');
+        link.href = companyLink('homestead.html', company.id);
+        link.textContent = company.name;
+        heading.append(link);
+        card.append(heading);
+        if (company.description) {
+          const description = document.createElement('p');
+          description.className = 'muted';
+          description.textContent = company.description;
+          card.append(description);
+        }
+        list.append(card);
+      }
+      const summary = available.length ?
+        `${available.length} ${available.length === 1 ? 'homestead' : 'homesteads'} to explore.` :
+        'No published homestead pages found.';
+      status('homestead-discovery-status', summary +
+        (failedPages ? ` ${failedPages} ${failedPages === 1 ? 'page' : 'pages'} could not be loaded. Close and reopen to retry.` : ''),
+        failedPages > 0);
+    } catch (error) {
+      if (loadId === homesteadLoadId) status('homestead-discovery-status',
+        `Could not load homesteads: ${readableError(error)}. Close and reopen to try again.`, true);
+    }
+  }
+  const findHomesteads = $('find-homesteads');
+  if (findHomesteads) findHomesteads.addEventListener('click', () => {
+    const panel = $('homestead-discovery');
+    panel.hidden = !panel.hidden;
+    findHomesteads.setAttribute('aria-expanded', String(!panel.hidden));
+    const loadId = ++homesteadLoadId;
+    if (!panel.hidden) loadHomesteads(loadId);
+  });
   function cleanSubscriptions() {
     for (const unsub of [memberConversationUnsub, profileUnsub, applicationUnsub, questionnaireUnsub, questionnaireConfigUnsub, skillsUnsub, skillCatalogUnsub, rosterTeamsUnsub, rosterSummariesUnsub]) if (unsub) unsub();
     for (const unsub of rosterMemberUnsubs.values()) unsub();

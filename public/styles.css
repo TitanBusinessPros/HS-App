@@ -145,6 +145,12 @@ main{width:100%;flex:1}
 .card > .eyebrow{display:block}
 .section-heading,.inbox-heading{justify-content:center;text-align:center}
 .questionnaire-link{text-align:center}
+.homestead-discovery{margin-top:20px;text-align:left}
+.homestead-discovery-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,240px),1fr));gap:12px;margin-top:14px}
+.homestead-discovery-card{padding:17px;border:1px solid #dce5d9;border-radius:10px;background:#f8fbf6;overflow-wrap:anywhere}
+.homestead-discovery-card h3{margin:0 0 8px;font-family:Fraunces,Georgia,serif;font-size:1.2rem}
+.homestead-discovery-card h3 a{color:#234837;text-underline-offset:3px}
+.homestead-discovery-card p{margin:0 0 8px}
 .policy-page article > .eyebrow,.policy-page article > h1,.policy-page article > p.muted{text-align:center}
 .site-footer{width:100%;margin-top:auto;padding:40px 24px 24px;background:#203b2b;border-top:4px solid #72916f;color:#f5f5ed}
 .footer-inner{max-width:960px;margin:0 auto;display:grid;justify-items:center;gap:22px;text-align:center}

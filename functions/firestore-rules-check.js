@@ -25,7 +25,7 @@ async function request(uid, path, method = 'GET') {
       ...(method === 'PATCH' ? { 'Content-Type': 'application/json' } : {}) },
     ...(method === 'PATCH' ? { body: JSON.stringify({ fields: { leaked: { booleanValue: true } } }) } : {})
   });
-  return response.status;
+  return response;
 }
 
 await Promise.all([
@@ -42,6 +42,12 @@ await Promise.all([
   db.doc(`companies/${companyA}/conversations/applicant/messages/a`).set({ text: 'A private message' }),
   db.doc(`companies/${companyB}/conversations/applicant/messages/b`).set({ text: 'B private message' })
 ]);
+
+const discoveryIds = Array.from({ length: 10 }, (_, index) => `homestead${String(index).padStart(11, '0')}`);
+await Promise.all(discoveryIds.flatMap((id, index) => [
+  db.doc(`companyListings/${id}`).set({ name: `Homestead ${index}`, active: true }),
+  db.doc(`companies/${id}/homesteadPage/main`).set({ name: `Homestead ${index}`, published: true })
+]));
 
 const cases = [
   ['adminA', 'applicantDirectory/applicant', 200],
@@ -64,8 +70,19 @@ const cases = [
 ];
 
 for (const [uid, path, expected, method] of cases) {
-  const actual = await request(uid, path, method);
+  const actual = (await request(uid, path, method)).status;
   assert.equal(actual, expected, `${uid} ${method || 'GET'} ${path}: expected ${expected}, got ${actual}`);
 }
 
-console.log(`${cases.length} Firestore tenant isolation checks passed`);
+for (const uid of ['applicant', 'futureApplicant']) {
+  const response = await request(uid, 'companyListings');
+  assert.equal(response.status, 200, `${uid} can list homesteads`);
+  const body = await response.json();
+  assert.equal(body.documents?.length, 10, `${uid} sees every homestead listing`);
+  for (const id of discoveryIds) {
+    assert.equal((await request(uid, `companies/${id}/homesteadPage/main`)).status, 200,
+      `${uid} can read ${id}'s published page`);
+  }
+}
+
+console.log(`${cases.length} tenant isolation checks and 10 homestead discovery checks passed`);

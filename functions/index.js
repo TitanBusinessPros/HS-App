@@ -1424,14 +1424,28 @@ export const saveHomesteadPage = onCall({ ...options, timeoutSeconds: 120 }, asy
   for (let index = 0; index < text.length; index += 5000) await checkText(text.slice(index, index + 5000));
   await db.runTransaction(async transaction => {
     await assertActive(transaction, user.uid);
-    const admin = await transaction.get(db.doc(`admins/${user.uid}`));
+    const companyRef = companyId === primaryCompanyId ? null : db.doc(`companies/${companyId}`);
+    const [admin, company] = await Promise.all([
+      transaction.get(db.doc(`admins/${user.uid}`)),
+      companyRef ? transaction.get(companyRef) : Promise.resolve(null)
+    ]);
     if (!admin.exists || companyIdOf(admin) !== companyId ||
-        (companyId === primaryCompanyId ? !hasMasterEmail(user) : admin.data().role !== 'owner')) {
+        (companyId === primaryCompanyId ? !hasMasterEmail(user) : admin.data().role !== 'owner') ||
+        (companyRef && (!company.exists || company.data().active === false || company.data().ownerUid !== user.uid))) {
       throw new HttpsError('permission-denied', 'Company owner access required.');
     }
     transaction.set(companyDoc(companyId, 'homesteadPage/main'), {
       ...page, published: true, updatedBy: user.uid, updatedAt: FieldValue.serverTimestamp()
     }, { merge: true });
+    if (companyRef) {
+      const existingName = company.data().name;
+      const name = typeof existingName === 'string' && existingName.trim() && existingName !== 'Homestead company'
+        ? existingName.trim() : page.name;
+      transaction.update(companyRef, { name, listed: true, updatedAt: FieldValue.serverTimestamp() });
+      transaction.set(db.doc(`companyListings/${companyId}`), {
+        name, active: true, updatedAt: FieldValue.serverTimestamp()
+      });
+    }
   });
   return { saved: true };
 });

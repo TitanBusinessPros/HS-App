@@ -19,7 +19,6 @@ const scopedDoc = (...parts) => doc(db, ...companySegments(companyId, ...parts))
 const scopedCollection = (...parts) => collection(db, ...companySegments(companyId, ...parts));
 const functions = getFunctions(app, 'us-west2');
 const savePage = httpsCallable(functions, 'saveHomesteadPage');
-const saveCompanyProfile = httpsCallable(functions, 'saveCompanyProfile');
 const addPhoto = httpsCallable(functions, 'addHomesteadPhoto');
 const deletePhoto = httpsCallable(functions, 'deleteHomesteadPhoto');
 const saveQuestionnaire = httpsCallable(functions, 'saveQuestionnaire');
@@ -340,8 +339,6 @@ $('homestead-form').addEventListener('submit', async event => {
   button.disabled = true;
   try {
     const name = $('edit-homestead-name').value.trim();
-    // A published company page must have a listing before applicants can find it.
-    if (companyId !== 'titan') await saveCompanyProfile({ name });
     await savePage({
       name,
       description: $('edit-homestead-description').value.trim(),

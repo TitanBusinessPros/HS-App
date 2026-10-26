@@ -148,6 +148,7 @@ main{width:100%;flex:1}
 .welcome{max-width:700px;text-align:center}
 .welcome > .welcome-tagline{font-family:Caveat,Georgia,serif;font-size:clamp(2.1rem,3.4vw,3rem);font-weight:700;line-height:1.15;letter-spacing:-.025em;color:#315b43;max-width:680px}
 .auth-card{width:min(100%,480px)}
+.auth-card > .eyebrow,.auth-card > h2,.auth-card > .muted{text-align:center}
 .state-card{text-align:center}
 .card > h2,.card > h3,.card > .eyebrow,.questionnaire-editor-card > summary{text-align:center}
 .card > .eyebrow{display:block}
